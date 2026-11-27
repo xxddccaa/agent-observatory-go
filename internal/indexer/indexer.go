@@ -30,6 +30,7 @@ type Options struct {
 	Layouts        map[string][]string
 	CustomAdapters []adapters.Adapter
 	PollInterval   time.Duration
+	OnCycleError   func(stats model.CycleStats, summary string)
 }
 
 type settledEntry struct {
@@ -45,10 +46,12 @@ type Indexer struct {
 	extraRoots   map[string][]string
 	layouts      map[string][]string
 	pollInterval time.Duration
+	onCycleError func(stats model.CycleStats, summary string)
 
-	mu      sync.RWMutex
-	settled map[string]settledEntry
-	status  model.IndexerStatus
+	mu            sync.RWMutex
+	settled       map[string]settledEntry
+	status        model.IndexerStatus
+	lastLoggedErr string
 }
 
 // New constructs an Indexer for V1 built-in adapters plus configured extra roots.
@@ -72,6 +75,7 @@ func New(store *storage.Store, opts Options) *Indexer {
 		extraRoots:   opts.ExtraRoots,
 		layouts:      opts.Layouts,
 		pollInterval: poll,
+		onCycleError: opts.OnCycleError,
 		settled:      make(map[string]settledEntry),
 		status: model.IndexerStatus{
 			Status:    "starting",
@@ -223,6 +227,7 @@ func (idx *Indexer) RunOnce(ctx context.Context, full bool) (model.CycleStats, e
 	detected := discovery.DetectedAgents(idx.extraRoots, idx.layouts)
 	nowStr := model.FormatUTC(time.Now())
 
+	var notifyErr string
 	idx.mu.Lock()
 	idx.status.LastSeenAt = nowStr
 	idx.status.ActiveSessions = stats.Discovered
@@ -231,6 +236,7 @@ func (idx *Indexer) RunOnce(ctx context.Context, full bool) (model.CycleStats, e
 	if stats.Failures == 0 {
 		idx.status.LastSuccessAt = nowStr
 		idx.status.LastError = ""
+		idx.lastLoggedErr = ""
 		if idx.status.Running {
 			idx.status.Status = "running"
 		}
@@ -239,8 +245,17 @@ func (idx *Indexer) RunOnce(ctx context.Context, full bool) (model.CycleStats, e
 		if idx.status.Running {
 			idx.status.Status = "degraded"
 		}
+		if lastErrMsg != idx.lastLoggedErr {
+			idx.lastLoggedErr = lastErrMsg
+			notifyErr = lastErrMsg
+		}
 	}
+	onErr := idx.onCycleError
 	idx.mu.Unlock()
+
+	if notifyErr != "" && onErr != nil {
+		onErr(stats, notifyErr)
+	}
 
 	return stats, nil
 }

@@ -104,7 +104,13 @@ func verifyWAL(ctx context.Context, db *sql.DB) error {
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("pin sqlite migration conn: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,
 			applied_at TEXT NOT NULL
@@ -127,7 +133,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		}
 		version := strings.TrimSuffix(entry.Name(), ".sql")
 		var existing string
-		err := db.QueryRowContext(ctx, "SELECT version FROM schema_migrations WHERE version = ?", version).Scan(&existing)
+		err := conn.QueryRowContext(ctx, "SELECT version FROM schema_migrations WHERE version = ?", version).Scan(&existing)
 		if err == nil {
 			continue
 		}
@@ -139,12 +145,27 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", version, err)
 		}
-		tx, err := db.BeginTx(ctx, nil)
+		sqlText := string(sqlBytes)
+		disableFK := strings.Contains(sqlText, "-- pragma:disable-foreign-keys")
+		if disableFK {
+			// SQLite ignores PRAGMA foreign_keys=OFF inside an active transaction.
+			if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF;"); err != nil {
+				return fmt.Errorf("disable foreign keys for %s: %w", version, err)
+			}
+		}
+
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
+			if disableFK {
+				_, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;")
+			}
 			return fmt.Errorf("begin migration %s: %w", version, err)
 		}
-		if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
+		if _, err := tx.ExecContext(ctx, sqlText); err != nil {
 			_ = tx.Rollback()
+			if disableFK {
+				_, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;")
+			}
 			return fmt.Errorf("exec migration %s: %w", version, err)
 		}
 		if _, err := tx.ExecContext(
@@ -154,10 +175,30 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			model.FormatUTC(time.Now()),
 		); err != nil {
 			_ = tx.Rollback()
+			if disableFK {
+				_, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;")
+			}
 			return fmt.Errorf("record migration %s: %w", version, err)
 		}
 		if err := tx.Commit(); err != nil {
+			if disableFK {
+				_, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;")
+			}
 			return fmt.Errorf("commit migration %s: %w", version, err)
+		}
+		if disableFK {
+			if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;"); err != nil {
+				return fmt.Errorf("restore foreign keys after %s: %w", version, err)
+			}
+			rows, err := conn.QueryContext(ctx, "PRAGMA foreign_key_check;")
+			if err != nil {
+				return fmt.Errorf("foreign key check after %s: %w", version, err)
+			}
+			hasViolation := rows.Next()
+			_ = rows.Close()
+			if hasViolation {
+				return fmt.Errorf("foreign key integrity violation after migration %s", version)
+			}
 		}
 	}
 	return nil

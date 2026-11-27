@@ -149,3 +149,63 @@ func TestIndexerEndToEndIncrementalAndErrorIsolation(t *testing.T) {
 		t.Fatalf("unexpected indexer snapshot: %+v", snap)
 	}
 }
+
+func TestIndexerClaudeAndGeminiSubagentsWithoutParentFKFailure(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, err := storage.Open(ctx, dataDir)
+	if err != nil {
+		t.Fatalf("storage.Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	claudeRoot := filepath.Join(t.TempDir(), "claude-projects")
+	claudeSubDir := filepath.Join(claudeRoot, "-tmp-demo", "thr-claude-parent-missing", "subagents")
+	if err := os.MkdirAll(claudeSubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeSubFile := filepath.Join(claudeSubDir, "agent-1.jsonl")
+	claudeLine := `{"type":"user","timestamp":"2026-11-27T02:00:00Z","cwd":"/tmp/demo","message":{"role":"user","content":"subagent prompt"}}` + "\n"
+	if err := os.WriteFile(claudeSubFile, []byte(claudeLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	geminiHome := filepath.Join(t.TempDir(), "gemini-home")
+	geminiSubDir := filepath.Join(geminiHome, "tmp", "demo-slug", "chats", "thr-gemini-parent-missing")
+	if err := os.MkdirAll(geminiSubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	geminiSubFile := filepath.Join(geminiSubDir, "sub-1.jsonl")
+	geminiLines := strings.Join([]string{
+		`{"type":"session_meta","sessionId":"sub-gem-1","timestamp":"2026-11-27T02:01:00Z"}`,
+		`{"type":"user","timestamp":"2026-11-27T02:01:01Z","text":"subagent gemini"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(geminiSubFile, []byte(geminiLines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := New(store, Options{
+		CustomAdapters: []adapters.Adapter{
+			adapters.NewClaudeAdapter(claudeRoot),
+			adapters.NewGeminiAdapter(geminiHome),
+		},
+	})
+
+	stats, err := idx.RunOnce(ctx, true)
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if stats.Failures != 0 || stats.Indexed != 2 || idx.Snapshot().LastError != "" {
+		t.Fatalf("expected 0 failures and 2 indexed subagents, got stats=%+v lastErr=%q", stats, idx.Snapshot().LastError)
+	}
+
+	sessions, err := store.ListSessions(ctx, model.SessionListFilter{IncludeSubagents: true, Limit: 10})
+	if err != nil || len(sessions.Sessions) != 2 {
+		t.Fatalf("ListSessions(IncludeSubagents=true) = %+v, err=%v", sessions, err)
+	}
+	for _, s := range sessions.Sessions {
+		if !s.IsSubagent || s.ParentSessionID == nil || *s.ParentSessionID == "" {
+			t.Fatalf("expected subagent parent_session_id preserved, got %+v", s)
+		}
+	}
+}

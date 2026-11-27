@@ -18,6 +18,7 @@ import (
 	"github.com/agent-observatory/agent-observatory-go/internal/indexer"
 	"github.com/agent-observatory/agent-observatory-go/internal/launcher"
 	"github.com/agent-observatory/agent-observatory-go/internal/model"
+	"github.com/agent-observatory/agent-observatory-go/internal/redact"
 	"github.com/agent-observatory/agent-observatory-go/internal/storage"
 	"github.com/agent-observatory/agent-observatory-go/internal/webui"
 )
@@ -145,9 +146,24 @@ func RunServer(ctx context.Context, cfg config.Config, opts RunOptions) int {
 		return fail(fmt.Sprintf("start control channel: %v", err))
 	}
 
+	var logMu sync.Mutex
 	idx := indexer.New(store, indexer.Options{
 		ExtraRoots:   cfg.ExtraRoots,
 		PollInterval: time.Duration(config.DefaultPollMillis) * time.Millisecond,
+		OnCycleError: func(stats model.CycleStats, summary string) {
+			line, encErr := json.Marshal(map[string]string{
+				"ts":        model.FormatUTC(time.Now()),
+				"component": "indexer",
+				"level":     "error",
+				"message":   redact.Strings(fmt.Sprintf("indexing cycle failed (failures=%d, discovered=%d): %s", stats.Failures, stats.Discovered, summary)),
+			})
+			if encErr != nil {
+				return
+			}
+			logMu.Lock()
+			_, _ = opts.Stderr.Write(append(line, '\n'))
+			logMu.Unlock()
+		},
 	})
 	var idxWg sync.WaitGroup
 	idxWg.Add(1)

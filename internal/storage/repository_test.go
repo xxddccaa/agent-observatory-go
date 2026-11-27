@@ -697,5 +697,40 @@ func TestRepositoryIngestQueriesCascadesAndAnalytics(t *testing.T) {
 	}
 }
 
+func TestSubagentAllowsNativeParentThreadIDWithoutFKFailure(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ts := model.FormatUTC(time.Date(2026, 11, 27, 4, 0, 0, 0, time.UTC))
+	parentThread := "native-parent-thread-not-indexed"
+	err = store.WithWriterTx(ctx, func(tx *sql.Tx) error {
+		return store.UpsertSessionTx(ctx, tx, model.AgentSession{
+			ID:              "sess-orphan-sub",
+			Agent:           "claude",
+			SourceKind:      "claude_jsonl",
+			SourceIdentity:  "sha256:orphan-sub",
+			ThreadID:        "agent-123",
+			IsSubagent:      true,
+			ParentSessionID: &parentThread,
+			ParserVersion:   "1",
+			IndexStatus:     "indexed",
+			CreatedAt:       ts,
+			UpdatedAt:       ts,
+		})
+	})
+	if err != nil {
+		t.Fatalf("UpsertSessionTx() with unindexed parent thread failed: %v", err)
+	}
+
+	got, err := store.GetSession(ctx, "sess-orphan-sub")
+	if err != nil || got.ParentSessionID == nil || *got.ParentSessionID != parentThread {
+		t.Fatalf("unexpected GetSession result: got=%+v err=%v", got, err)
+	}
+}
+
 func strPtr(v string) *string { return &v }
 func intPtr(v int) *int       { return &v }
