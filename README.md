@@ -35,7 +35,7 @@ irm https://raw.githubusercontent.com/xxddccaa/agent-observatory-go/main/scripts
 
 ### 升级与卸载
 
-- **升级**：重新执行上面的安装脚本即可原子替换二进制文件（不会删除 SQLite 数据目录 `~/.agent-observatory-go`）。
+- **升级**：随时重新执行上面的同一条安装命令即可拉取最新 Release 并原子替换二进制文件（如后台正在运行会先优雅停机并在后台重启新版；不会删除 SQLite 数据目录 `~/.agent-observatory-go`）。
 - **卸载**：先执行 `aobs stop`，再删除安装的可执行文件及数据目录：
   ```sh
   rm -f ~/.local/bin/agent-observatory ~/.local/bin/aobs

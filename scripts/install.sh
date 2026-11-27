@@ -95,10 +95,28 @@ download_file() {
 }
 
 resolve_latest_version() {
+  latest_url="https://github.com/${REPO}/releases/latest"
+  # Prefer GitHub's web redirect over api.github.com to avoid the 60 req/hr unauthenticated IP rate limit.
+  for curl_flags in "-fsSLI" "-fsSL"; do
+    effective_url="$(curl $curl_flags -o /dev/null -w '%{url_effective}' "$latest_url" 2>/dev/null || true)"
+    effective_url="${effective_url%/}"
+    case "$effective_url" in
+      */releases/tag/*)
+        tag="${effective_url##*/releases/tag/}"
+        tag="${tag%%\?*}"
+        tag="${tag%%#*}"
+        if [ -n "$tag" ]; then
+          echo "$tag"
+          return 0
+        fi
+        ;;
+    esac
+  done
+
   api_url="https://api.github.com/repos/${REPO}/releases/latest"
   tag="$(fetch_text "$api_url" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
   if [ -z "$tag" ]; then
-    echo "failed to resolve latest release tag from ${api_url}; pass --version explicitly" >&2
+    echo "failed to resolve latest release tag from ${latest_url} or ${api_url}; pass --version explicitly" >&2
     exit 1
   fi
   echo "$tag"
@@ -158,16 +176,32 @@ if [ ! -f "${TMP_DIR}/${APP_NAME}" ]; then
   exit 1
 fi
 
+DEST_BIN="${INSTALL_DIR}/${APP_NAME}"
+WAS_RUNNING=0
+if [ -x "$DEST_BIN" ] && "$DEST_BIN" status >/dev/null 2>&1; then
+  WAS_RUNNING=1
+  # Stop the active daemon before swapping binaries so subsequent `aobs` calls do not reuse the stale version.
+  "$DEST_BIN" stop >/dev/null 2>&1 || true
+fi
+
 mkdir -p "$INSTALL_DIR"
 STAGE_BIN="${INSTALL_DIR}/.${APP_NAME}.tmp.$$"
 cp "${TMP_DIR}/${APP_NAME}" "$STAGE_BIN"
 chmod 0755 "$STAGE_BIN"
 # Stage inside destination directory so mv is an atomic same-filesystem replace.
-mv -f "$STAGE_BIN" "${INSTALL_DIR}/${APP_NAME}"
+mv -f "$STAGE_BIN" "$DEST_BIN"
 ln -sf "${APP_NAME}" "${INSTALL_DIR}/aobs"
 
-INSTALLED_VERSION="$("${INSTALL_DIR}/${APP_NAME}" --version 2>/dev/null || true)"
-echo "Installed ${INSTALLED_VERSION:-${APP_NAME}} to ${INSTALL_DIR}/${APP_NAME} (short alias: ${INSTALL_DIR}/aobs)"
+INSTALLED_VERSION="$("$DEST_BIN" --version 2>/dev/null || true)"
+echo "Installed ${INSTALLED_VERSION:-${APP_NAME}} to ${DEST_BIN} (short alias: ${INSTALL_DIR}/aobs)"
+
+if [ "$WAS_RUNNING" -eq 1 ]; then
+  if "$DEST_BIN" --no-open >/dev/null 2>&1; then
+    echo "Restarted running ${APP_NAME} daemon in background."
+  else
+    echo "Stopped previous daemon; run 'aobs' to start the updated version." >&2
+  fi
+fi
 
 case ":${PATH:-}:" in
   *":${INSTALL_DIR}:"*) ;;

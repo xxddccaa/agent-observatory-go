@@ -10,6 +10,12 @@ param(
 $ErrorActionPreference = "Stop"
 $AppName = "agent-observatory"
 
+try {
+  # Enable TLS 1.2 for Windows PowerShell 5.1 before calling GitHub.
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {
+}
+
 function Resolve-Arch {
   $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
   switch ($arch) {
@@ -18,18 +24,43 @@ function Resolve-Arch {
   }
 }
 
+function Resolve-LatestVersion {
+  param([string]$RepoSlug)
+  $LatestUrl = "https://github.com/$RepoSlug/releases/latest"
+  try {
+    # Prefer GitHub's web redirect over api.github.com to avoid the 60 req/hr unauthenticated IP rate limit.
+    $Req = [System.Net.HttpWebRequest]::Create($LatestUrl)
+    $Req.Method = "HEAD"
+    $Req.AllowAutoRedirect = $true
+    $Resp = $Req.GetResponse()
+    try {
+      $FinalUrl = $Resp.ResponseUri.AbsoluteUri
+    } finally {
+      $Resp.Close()
+    }
+    if ($FinalUrl -match "/releases/tag/([^/?#]+)") {
+      return $Matches[1]
+    }
+  } catch {
+    # Fall back to GitHub REST API below.
+  }
+
+  $LatestApi = "https://api.github.com/repos/$RepoSlug/releases/latest"
+  $Release = Invoke-RestMethod -Uri $LatestApi -Headers @{ "Accept" = "application/vnd.github+json" }
+  $Tag = $Release.tag_name
+  if ([string]::IsNullOrWhiteSpace($Tag)) {
+    throw "Failed to resolve latest release tag from $LatestUrl or $LatestApi"
+  }
+  return $Tag
+}
+
 $Arch = Resolve-Arch
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
   if (-not [string]::IsNullOrWhiteSpace($BaseUrl)) {
     throw "-Version / AGENT_OBS_VERSION is required when BaseUrl is overridden."
   }
-  $LatestApi = "https://api.github.com/repos/$Repo/releases/latest"
-  $Release = Invoke-RestMethod -Uri $LatestApi -Headers @{ "Accept" = "application/vnd.github+json" }
-  $Version = $Release.tag_name
-  if ([string]::IsNullOrWhiteSpace($Version)) {
-    throw "Failed to resolve latest release tag from $LatestApi"
-  }
+  $Version = Resolve-LatestVersion -RepoSlug $Repo
 }
 
 $VersionNum = $Version.TrimStart("v")
@@ -59,8 +90,8 @@ try {
   $ExtractDir = Join-Path $TempDir "extract"
 
   Write-Host "Downloading $ArchiveUrl..."
-  Invoke-WebRequest -Uri $ArchiveUrl -OutFile $ArchivePath
-  Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath
+  Invoke-WebRequest -UseBasicParsing -Uri $ArchiveUrl -OutFile $ArchivePath
+  Invoke-WebRequest -UseBasicParsing -Uri $ChecksumsUrl -OutFile $ChecksumsPath
 
   $ExpectedLine = Get-Content -Path $ChecksumsPath | Where-Object { $_ -match ("^\s*([0-9a-fA-F]{64})\s+" + [Regex]::Escape($Archive) + "\s*$") } | Select-Object -First 1
   if (-not $ExpectedLine) {
@@ -80,6 +111,16 @@ try {
 
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
   $DestExe = Join-Path $InstallDir "$AppName.exe"
+  $WasRunning = $false
+  if (Test-Path $DestExe) {
+    & $DestExe status *> $null
+    if ($LASTEXITCODE -eq 0) {
+      $WasRunning = $true
+      # Stop the running binary first so Windows releases the file lock before Move-Item.
+      & $DestExe stop *> $null
+    }
+  }
+
   $StageExe = Join-Path $InstallDir ".$AppName.exe.tmp"
   Copy-Item -Path $ExtractedExe -Destination $StageExe -Force
   Move-Item -Path $StageExe -Destination $DestExe -Force
@@ -96,6 +137,14 @@ try {
 
   $VerOut = & $DestExe --version
   Write-Host "Installed $VerOut to $DestExe"
+  if ($WasRunning) {
+    & $DestExe --no-open *> $null
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host "Restarted running $AppName daemon in background."
+    } else {
+      Write-Warning "Stopped previous daemon; run 'aobs' to start the updated version."
+    }
+  }
 }
 finally {
   Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
