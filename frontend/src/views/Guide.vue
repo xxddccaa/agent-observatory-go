@@ -1,0 +1,425 @@
+<template>
+  <div class="guide-page">
+    <header class="guide-hero">
+      <div>
+        <p class="eyebrow">Agent Observatory</p>
+        <h1>使用方法</h1>
+        <p class="lede">
+          Agent Observatory 是一个本地优先、只读的多 agent 会话观测台。它把本机不同
+          coding agent 的历史会话整理到统一界面中，方便浏览、搜索、分析和审计。
+        </p>
+      </div>
+      <div class="hero-note">
+        <BookOpen :size="18" aria-hidden="true" />
+        <span>本页内容可直接作为日常使用和本地部署速查表。</span>
+      </div>
+    </header>
+
+    <div class="guide-layout">
+      <main class="guide-content">
+        <section id="quick-start" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">01</span>
+            <div>
+              <h2>快速开始</h2>
+              <p>启动服务后，在浏览器打开默认入口即可使用，无需登录。</p>
+            </div>
+          </div>
+          <div class="info-grid">
+            <article class="info-card">
+              <span class="card-kicker">入口</span>
+              <strong>http://127.0.0.1:8125</strong>
+              <p>默认由 Supervisor 托管 API 和 Indexer Worker。</p>
+            </article>
+            <article class="info-card">
+              <span class="card-kicker">定位</span>
+              <strong>只读观测台</strong>
+              <p>不会修改、重命名或删除任何 agent 的原始会话文件。</p>
+            </article>
+            <article class="info-card">
+              <span class="card-kicker">数据</span>
+              <strong>持续索引</strong>
+              <p>Indexer 会发现本地数据源，并以增量方式更新历史记录。</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="navigation" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">02</span>
+            <div>
+              <h2>主导航</h2>
+              <p>从侧边栏进入不同的观测视图。</p>
+            </div>
+          </div>
+          <div class="feature-list">
+            <article v-for="item in navigationItems" :key="item.title" class="feature-item">
+              <div class="feature-icon" aria-hidden="true">{{ item.icon }}</div>
+              <div>
+                <h3>{{ item.title }}</h3>
+                <p>{{ item.description }}</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="history" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">03</span>
+            <div>
+              <h2>History：浏览会话</h2>
+              <p>History 是查看原始会话内容最常用的入口。</p>
+            </div>
+          </div>
+          <div class="steps">
+            <div v-for="(step, index) in historySteps" :key="step.title" class="step">
+              <span class="step-index">{{ index + 1 }}</span>
+              <div>
+                <h3>{{ step.title }}</h3>
+                <p>{{ step.description }}</p>
+              </div>
+            </div>
+          </div>
+          <div class="callout callout--accent">
+            <strong>Subagent 默认隐藏</strong>
+            <p>
+              History 默认只显示主会话。需要检查派遣任务时，再勾选
+              <code>Show subagents</code>；child session 会显示 <code>subagent</code>
+              标记，并保留 parent session 关系。
+            </p>
+          </div>
+          <div class="callout">
+            <strong>时间和 workspace</strong>
+            <p>
+              列表时间优先使用会话最后一条真实活动事件；如果源数据没有可靠时间，会显示
+              <code>—</code>，不会把扫描时间误认为活动时间。类似
+              <code>/tmp/tmp...</code> 的目录通常是临时执行 workspace（
+              <code>ephemeral_task</code>），但仅凭路径不能证明它是 subagent。
+            </p>
+          </div>
+        </section>
+
+        <section id="projects" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">04</span>
+            <div>
+              <h2>Projects：按 workspace 聚合</h2>
+              <p>用项目视角比较不同工作目录的会话和资源消耗。</p>
+            </div>
+          </div>
+          <ul class="plain-list">
+            <li>项目标题显示目录 basename，完整路径可悬停查看或复制。</li>
+            <li>查看 session、turn、token 总量和最近活动时间。</li>
+            <li>进入项目详情后，可以继续打开该 workspace 下的具体会话。</li>
+            <li>workspace 会标记为 project、ephemeral、test、system 或 deleted 等类型。</li>
+          </ul>
+        </section>
+
+        <section id="insights" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">05</span>
+            <div>
+              <h2>Insights：分析指标</h2>
+              <p>从聚合指标中了解 agent 的使用量、延迟和质量信号。</p>
+            </div>
+          </div>
+          <div class="metric-grid">
+            <div v-for="metric in insightItems" :key="metric.title" class="metric-card">
+              <strong>{{ metric.title }}</strong>
+              <span>{{ metric.description }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="details" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">06</span>
+            <div>
+              <h2>会话详情与导出</h2>
+              <p>打开单个会话后，可以按不同视图审阅完整证据。</p>
+            </div>
+          </div>
+          <div class="detail-grid">
+            <div>
+              <h3>可查看内容</h3>
+              <ul class="plain-list">
+                <li>用户消息、assistant 回复和 reasoning 摘要。</li>
+                <li>工具调用、参数、输出、状态和失败信息。</li>
+                <li>原始事件时间线，包括未知事件及其 <code>raw_json</code>。</li>
+                <li>会话内全文搜索，并支持复制完整长文本。</li>
+              </ul>
+            </div>
+            <div>
+              <h3>导出格式</h3>
+              <ul class="plain-list">
+                <li><code>Text</code>：适合终端或纯文本归档。</li>
+                <li><code>Markdown</code>：适合文档和评审。</li>
+                <li><code>JSON</code>：保留结构化会话数据。</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="deployment" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">07</span>
+            <div>
+              <h2>本地部署与运维</h2>
+              <p>使用单个 Go 二进制 <code>agent-observatory</code> 启停后台守护或执行单次索引。</p>
+            </div>
+          </div>
+          <div class="command-list">
+            <article v-for="command in commands" :key="command.title" class="command-card">
+              <div class="command-card__header">
+                <div>
+                  <h3>{{ command.title }}</h3>
+                  <p>{{ command.description }}</p>
+                </div>
+                <button
+                  type="button"
+                  class="copy-button"
+                  :aria-label="`复制${command.title}`"
+                  @click="copyCommand(command.title, command.command)"
+                >
+                  <Check v-if="copiedCommand === command.title" :size="14" aria-hidden="true" />
+                  <Copy v-else :size="14" aria-hidden="true" />
+                  {{ copiedCommand === command.title ? "已复制" : "复制" }}
+                </button>
+              </div>
+              <pre><code>{{ command.command }}</code></pre>
+            </article>
+          </div>
+          <div class="endpoint-card">
+            <h3>健康检查接口</h3>
+            <div v-for="endpoint in endpoints" :key="endpoint.path" class="endpoint-row">
+              <code>{{ endpoint.method }}</code>
+              <span>{{ endpoint.path }}</span>
+              <small>{{ endpoint.description }}</small>
+            </div>
+          </div>
+        </section>
+
+        <section id="security" class="guide-section">
+          <div class="section-heading">
+            <span class="section-number">08</span>
+            <div>
+              <h2>权限与数据安全</h2>
+              <p>观测数据和控制操作遵循最小权限原则。</p>
+            </div>
+          </div>
+          <div class="security-list">
+            <div v-for="item in securityItems" :key="item.title" class="security-item">
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.description }}</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="faq" class="guide-section guide-section--last">
+          <div class="section-heading">
+            <span class="section-number">09</span>
+            <div>
+              <h2>常见问题</h2>
+              <p>遇到显示或索引问题时，可以先检查以下项目。</p>
+            </div>
+          </div>
+          <div class="faq-list">
+            <details v-for="item in faqItems" :key="item.question">
+              <summary>{{ item.question }}</summary>
+              <p>{{ item.answer }}</p>
+            </details>
+          </div>
+        </section>
+      </main>
+
+      <aside class="guide-index" aria-label="使用方法目录">
+        <span class="guide-index__label">本页目录</span>
+        <a v-for="item in sectionLinks" :key="item.id" :href="`#${item.id}`">{{ item.label }}</a>
+      </aside>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { BookOpen, Check, Copy } from "@lucide/vue";
+import { ref } from "vue";
+
+const copiedCommand = ref<string | null>(null);
+
+const navigationItems = [
+  { icon: "⌂", title: "Dashboard", description: "查看整体健康状态、最近会话和关键统计。" },
+  { icon: "◷", title: "History", description: "按 workspace 浏览会话，搜索、查看详情和导出。" },
+  { icon: "▣", title: "Projects", description: "按工作目录聚合 session、turn、token 和活动时间。" },
+  { icon: "⌁", title: "Insights", description: "查看 Token、延迟、工具失败率和质量信号。" },
+  { icon: "⚙", title: "System", description: "检查 API、SQLite、Indexer 和本地守护状态。" },
+];
+
+const historySteps = [
+  { title: "筛选", description: "按 agent、thread、workspace 或标题搜索；点击 Refresh 重新读取索引结果。" },
+  { title: "分组", description: "会话按 cwd/workspace 分组，目录标题显示 basename，完整路径可悬停或复制。" },
+  { title: "打开", description: "点击会话查看消息、reasoning、工具调用、事件时间线和 token 信息。" },
+  { title: "导出", description: "在会话详情页选择 Text、Markdown 或 JSON，导出前端可复制的完整内容。" },
+];
+
+const insightItems = [
+  { title: "Token usage", description: "输入、缓存输入、输出和 reasoning token。" },
+  { title: "Turn latency", description: "Turn 的耗时分布和 P50/P95 等统计。" },
+  { title: "Tool health", description: "工具调用量、延迟、失败率和状态。" },
+  { title: "Quality signals", description: "会话结果、错误和可观测质量证据。" },
+  { title: "Parent / child", description: "主会话和 subagent 的关系与调用链。" },
+  { title: "Source health", description: "各 agent 数据源的发现、索引和健康状态。" },
+];
+
+const commands = [
+  {
+    title: "后台启动",
+    description: "单实例后台启动服务并自动在浏览器打开回环入口。",
+    command: "agent-observatory",
+  },
+  {
+    title: "前台运行",
+    description: "在前台运行服务端和 2s 增量索引循环（调试/容器常用）。",
+    command: "agent-observatory --foreground",
+  },
+  {
+    title: "状态查看",
+    description: "检查本机运行中实例的 PID、端口、URL 和健康状态。",
+    command: "agent-observatory status",
+  },
+  {
+    title: "单次索引",
+    description: "扫描本地数据源并同步增量更新至 SQLite 后退出。",
+    command: "agent-observatory index --once",
+  },
+  {
+    title: "停止服务",
+    description: "优雅停止当前数据目录下的后台实例。",
+    command: "agent-observatory stop",
+  },
+];
+
+const endpoints = [
+  { method: "GET", path: "/api/meta", description: "应用标识、版本与数据目录指纹" },
+  { method: "GET", path: "/api/health/live", description: "进程存活检查" },
+  { method: "GET", path: "/api/health/ready", description: "SQLite 和 Indexer 就绪状态" },
+  { method: "GET", path: "/api/system/status", description: "组件状态与运行统计" },
+  { method: "GET", path: "/api/system/logs", description: "脱敏系统日志分页查询" },
+  { method: "GET", path: "/api/sessions", description: "多 agent 会话筛选与游标分页" },
+  { method: "GET", path: "/api/projects", description: "按 workspace 聚合的项目列表" },
+  { method: "GET", path: "/api/insights/overview", description: "聚合统计、分布与质量信号" },
+];
+
+const securityItems = [
+  { title: "访问控制", description: "单人本机使用，没有登录。默认只监听 127.0.0.1，并只接受 127.0.0.1 / localhost 的 Host 和同源写请求；改成 0.0.0.0 后同一网络内的人都能读取全部会话。" },
+  { title: "事实来源", description: "单文件 SQLite（WAL 模式）保存会话、事件（zstd 压缩）和索引断点，是唯一持久化事实来源。" },
+  { title: "原始文件", description: "索引过程严格只读 ~/.codex、~/.claude、~/.gemini、~/.gemini/antigravity 等源目录，绝不修改或删除原文件。" },
+  { title: "敏感信息", description: "展示和导出会进行 secret redaction；不要提交 token、密码、dump、日志或截图。" },
+];
+
+const faqItems = [
+  { question: "为什么会看到 /tmp/tmp... 这样的 workspace？", answer: "很多 agent executor 会为一次任务创建临时 sandbox。它会被标记为 ephemeral_task；这只表示目录生命周期短，不等价于 subagent。" },
+  { question: "为什么默认看不到 subagent？", answer: "History 默认隐藏 child session，避免派遣任务把主会话列表刷满。勾选 Show subagents 后即可查看。" },
+  { question: "为什么时间显示为 —？", answer: "源文件没有可解析的真实事件时间。系统不会用数据库扫描时间冒充活动时间，因此显示为未知。" },
+  { question: "新会话没有立即出现怎么办？", answer: "先点击 History 的 Refresh；如果仍未出现，可执行 agent-observatory index --once 触发单次增量索引。" },
+  { question: "页面更新后仍然显示旧内容怎么办？", answer: "浏览器可能缓存了旧 bundle，请执行 Ctrl/Cmd+Shift+R 强制刷新，并确认 /api/health/ready 返回正常。" },
+];
+
+const sectionLinks = [
+  { id: "quick-start", label: "快速开始" },
+  { id: "navigation", label: "主导航" },
+  { id: "history", label: "History" },
+  { id: "projects", label: "Projects" },
+  { id: "insights", label: "Insights" },
+  { id: "details", label: "会话详情与导出" },
+  { id: "deployment", label: "部署与运维" },
+  { id: "security", label: "权限与安全" },
+  { id: "faq", label: "常见问题" },
+];
+
+async function copyCommand(title: string, command: string) {
+  try {
+    await navigator.clipboard.writeText(command);
+    copiedCommand.value = title;
+    window.setTimeout(() => {
+      if (copiedCommand.value === title) copiedCommand.value = null;
+    }, 1600);
+  } catch {
+    copiedCommand.value = null;
+  }
+}
+</script>
+
+<style scoped>
+.guide-page { max-width: 1180px; margin: 0 auto; padding: 32px 24px 56px; }
+.guide-hero { display: flex; justify-content: space-between; gap: 28px; padding-bottom: 30px; border-bottom: 1px solid var(--border); }
+.guide-hero h1 { margin: 4px 0 10px; font-size: 31px; letter-spacing: -0.03em; }
+.lede { max-width: 720px; margin: 0; color: var(--fg-muted); font-size: 15px; line-height: 1.75; }
+.hero-note { align-self: end; display: flex; max-width: 245px; gap: 9px; padding: 12px 14px; border: 1px solid rgba(110,159,248,.24); border-radius: var(--radius); background: var(--accent-weak); color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.guide-layout { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 44px; align-items: start; }
+.guide-content { min-width: 0; }
+.guide-section { padding: 34px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 24px; }
+.guide-section--last { border-bottom: 0; }
+.section-heading { display: flex; gap: 13px; margin-bottom: 22px; }
+.section-number { color: var(--accent-strong); font-family: var(--mono); font-size: 11px; padding-top: 5px; }
+.section-heading h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.02em; }
+.section-heading p { margin: 0; color: var(--fg-muted); font-size: 13px; }
+.info-grid, .metric-grid, .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.info-card, .metric-card { display: flex; flex-direction: column; gap: 6px; min-height: 108px; padding: 15px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.card-kicker { color: var(--fg-subtle); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.info-card strong, .metric-card strong { font-size: 14px; }
+.info-card p, .metric-card span, .feature-item p, .step p, .security-item p { margin: 0; color: var(--fg-muted); font-size: 12px; line-height: 1.65; }
+.feature-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.feature-item { display: flex; gap: 11px; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.feature-icon { display: grid; flex: 0 0 26px; place-items: center; width: 26px; height: 26px; border-radius: 6px; background: var(--accent-weak); color: var(--accent-strong); font-size: 15px; }
+.feature-item h3, .step h3, .detail-grid h3, .endpoint-card h3, .command-card h3 { margin: 0 0 3px; font-size: 13px; }
+.steps { display: grid; gap: 8px; }
+.step { display: flex; gap: 13px; padding: 13px 15px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.step-index { display: grid; flex: 0 0 23px; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: var(--panel-3); color: var(--accent-strong); font-family: var(--mono); font-size: 11px; }
+.callout { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.callout--accent { border-color: rgba(110,159,248,.34); background: var(--accent-weak); }
+.callout strong { display: block; margin-bottom: 4px; font-size: 13px; }
+.callout p { margin: 0; color: var(--fg-muted); font-size: 12px; line-height: 1.7; }
+code, pre { font-family: var(--mono); }
+code { color: var(--accent-strong); font-size: .92em; }
+.plain-list { display: grid; gap: 9px; margin: 0; padding-left: 18px; color: var(--fg-muted); font-size: 13px; line-height: 1.65; }
+.metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.metric-card { min-height: 82px; }
+.detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.detail-grid > div { padding: 15px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.command-list { display: grid; gap: 10px; }
+.command-card { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.command-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 15px 10px; }
+.command-card__header p { margin: 0; color: var(--fg-muted); font-size: 12px; }
+.copy-button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 5px; background: transparent; color: var(--fg-muted); cursor: pointer; font-size: 11px; }
+.copy-button:hover { border-color: var(--accent); color: var(--fg); }
+.command-card pre { overflow-x: auto; margin: 0; padding: 13px 15px 15px; border-top: 1px solid var(--border); background: #101310; color: var(--fg); font-size: 12px; line-height: 1.7; }
+.endpoint-card { margin-top: 12px; padding: 15px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.endpoint-row { display: grid; grid-template-columns: 42px 1fr 1.4fr; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.endpoint-row:first-of-type { border-top: 0; }
+.endpoint-row code { color: var(--ok); }
+.endpoint-row small { color: var(--fg-muted); }
+.security-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.security-item { padding: 14px; border-left: 2px solid var(--accent); background: var(--panel); }
+.security-item strong { font-size: 13px; }
+.faq-list { display: grid; gap: 7px; }
+.faq-list details { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.faq-list summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.faq-list p { margin: 9px 0 0; color: var(--fg-muted); font-size: 12px; line-height: 1.7; }
+.guide-index { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 8px; padding-top: 38px; }
+.guide-index__label { margin-bottom: 4px; color: var(--fg-subtle); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.guide-index a { color: var(--fg-muted); font-size: 12px; text-decoration: none; }
+.guide-index a:hover { color: var(--accent-strong); }
+@media (max-width: 900px) {
+  .guide-layout { grid-template-columns: 1fr; gap: 0; }
+  .guide-index { position: static; order: -1; flex-direction: row; flex-wrap: wrap; padding: 14px 0 0; }
+  .guide-index__label { flex-basis: 100%; }
+}
+@media (max-width: 680px) {
+  .guide-page { padding: 24px 16px 40px; }
+  .guide-hero { flex-direction: column; gap: 16px; }
+  .hero-note { align-self: start; max-width: none; }
+  .info-grid, .feature-list, .metric-grid, .detail-grid, .security-list { grid-template-columns: 1fr; }
+  .endpoint-row { grid-template-columns: 42px 1fr; }
+  .endpoint-row small { grid-column: 2; }
+}
+</style>

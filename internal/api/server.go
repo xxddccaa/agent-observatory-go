@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,19 +32,21 @@ type ctxKey string
 const requestIDKey ctxKey = "request_id"
 
 type Server struct {
-	cfg     config.Config
-	store   *storage.Store
-	indexer *indexer.Indexer
-	webFS   fs.FS
-	handler http.Handler
+	cfg       config.Config
+	store     *storage.Store
+	indexer   *indexer.Indexer
+	webFS     fs.FS
+	startedAt string
+	handler   http.Handler
 }
 
 func NewServer(cfg config.Config, store *storage.Store, idx *indexer.Indexer, webFS fs.FS) *Server {
 	s := &Server{
-		cfg:     cfg,
-		store:   store,
-		indexer: idx,
-		webFS:   webFS,
+		cfg:       cfg,
+		store:     store,
+		indexer:   idx,
+		webFS:     webFS,
+		startedAt: model.FormatUTC(time.Now()),
 	}
 
 	mux := http.NewServeMux()
@@ -50,6 +54,35 @@ func NewServer(cfg config.Config, store *storage.Store, idx *indexer.Indexer, we
 	mux.HandleFunc("GET /api/health/live", s.handleLive)
 	mux.HandleFunc("GET /api/health/ready", s.handleReady)
 	mux.HandleFunc("GET /api/health", s.handleReady)
+
+	mux.HandleFunc("GET /api/system/status", s.handleSystemStatus)
+	mux.HandleFunc("GET /api/system/logs", s.handleSystemLogs)
+
+	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	mux.HandleFunc("GET /api/sessions/{id}/messages", s.handleSessionMessages)
+	mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionEvents)
+	mux.HandleFunc("GET /api/sessions/{id}/turns", s.handleSessionTurns)
+	mux.HandleFunc("GET /api/sessions/{id}/tools", s.handleSessionTools)
+	mux.HandleFunc("GET /api/sessions/{id}/search", s.handleSessionSearch)
+	mux.HandleFunc("GET /api/sessions/{id}/export", s.handleSessionExport)
+
+	mux.HandleFunc("GET /api/projects", s.handleListProjects)
+	mux.HandleFunc("GET /api/projects/{id}", s.handleGetProject)
+	mux.HandleFunc("GET /api/projects/{id}/timeseries", s.handleProjectTimeseries)
+
+	mux.HandleFunc("GET /api/insights/overview", s.handleInsightsOverview)
+	mux.HandleFunc("GET /api/insights/timeseries", s.handleInsightsTimeseries)
+	mux.HandleFunc("GET /api/insights/latency", s.handleInsightsLatency)
+	mux.HandleFunc("GET /api/insights/tools", s.handleInsightsTools)
+	mux.HandleFunc("GET /api/insights/skills", s.handleInsightsSkills)
+	mux.HandleFunc("GET /api/insights/agents", s.handleInsightsAgents)
+	mux.HandleFunc("GET /api/insights/sources", s.handleInsightsSources)
+	mux.HandleFunc("GET /api/insights/sessions/{id}/timeline", s.handleSessionTimeline)
+	mux.HandleFunc("GET /api/insights/evidence", s.handleListEvidence)
+	mux.HandleFunc("GET /api/insights/evidence/{id}", s.handleGetEvidence)
+	mux.HandleFunc("GET /api/insights/export", s.handleInsightsExport)
+
 	mux.HandleFunc("/", s.handleWebOrNotFound)
 
 	s.handler = s.withRequestID(s.withAccessGuard(mux))
@@ -76,14 +109,18 @@ func (s *Server) handleLive(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	writeJSON(w, http.StatusOK, s.buildReadiness(r.Context()))
+}
+
+func (s *Server) buildReadiness(ctx context.Context) model.ReadyHealth {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
 	components := map[string]model.ComponentHealth{}
 	recovery := []string{}
 	status := "ok"
 
-	if err := s.store.Ping(ctx); err != nil {
+	if err := s.store.Ping(probeCtx); err != nil {
 		status = "degraded"
 		components["sqlite"] = model.ComponentHealth{
 			Status:  "down",
@@ -125,13 +162,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, model.ReadyHealth{
+	return model.ReadyHealth{
 		Status:          status,
 		Version:         config.Version,
 		Environment:     s.cfg.Environment,
 		Components:      components,
 		RecoveryActions: recovery,
-	})
+	}
 }
 
 func (s *Server) handleWebOrNotFound(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +357,41 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code, messag
 			Retryable: retryable,
 		},
 	})
+}
+
+func writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		writeError(w, r, http.StatusNotFound, "not_found", "Resource not found", false)
+	case errors.Is(err, storage.ErrInvalidCursor), errors.Is(err, storage.ErrInvalidFilter):
+		writeError(w, r, http.StatusBadRequest, "bad_request", err.Error(), false)
+	default:
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "Internal storage error", true)
+	}
+}
+
+func parseQueryInt(r *http.Request, name string, defVal, minVal, maxVal int) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return defVal, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < minVal || n > maxVal {
+		return 0, storage.ErrInvalidFilter
+	}
+	return n, nil
+}
+
+func parseQueryBool(r *http.Request, name string) (*bool, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return nil, nil
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, storage.ErrInvalidFilter
+	}
+	return &b, nil
 }
 
 func newRequestID() string {

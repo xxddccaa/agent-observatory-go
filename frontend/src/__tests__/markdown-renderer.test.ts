@@ -1,0 +1,81 @@
+import { describe, expect, it } from "vitest";
+import { createMarkdownRenderer, renderMarkdown } from "../markdown/render";
+
+describe("renderMarkdown", () => {
+  it("renders common Markdown while keeping raw HTML inert", () => {
+    const html = renderMarkdown("## Result\n\n- **one**\n- `two`\n\n<script>alert(1)</script>");
+
+    expect(html).toContain("<h2>Result</h2>");
+    expect(html).toContain("<strong>one</strong>");
+    expect(html).toContain("<code>two</code>");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("renders only br tags as hard breaks inside table cells", () => {
+    const html = renderMarkdown(
+      "| Metric | Description |\n| --- | --- |\n| Base | 基础画像与全局偏好召回率<br>(Base Persona & Global Preference Recall) |\n| Variants | one<br/>two<br />three |"
+    );
+
+    expect(html).toContain("基础画像与全局偏好召回率<br>");
+    expect(html).toContain("(Base Persona &amp; Global Preference Recall)");
+    expect(html).toMatch(/one<br>\s*two<br>\s*three/);
+    expect(html).not.toContain("&lt;br&gt;");
+  });
+
+  it("keeps non-br HTML and code spans inert", () => {
+    const html = renderMarkdown(
+      '<span style="color:red">red</span>\n\n<br class="wide">\n\n`<br>`'
+    );
+
+    expect(html).not.toContain("<span");
+    expect(html).not.toContain("<br class");
+    expect(html).toContain("&lt;span");
+    expect(html).toContain("&lt;br class=");
+    expect(html).toContain("<code>&lt;br&gt;</code>");
+  });
+
+  it("renders both bracket and dollar display math", () => {
+    const html = renderMarkdown(String.raw`
+\[
+\mathbb E[h(x_k)h(x_k)^\top]
+\]
+
+$$
+\boxed{\text{EKF update}}
+$$
+`);
+
+    expect(html.match(/class="katex-display"/g)).toHaveLength(2);
+    expect(html).toContain("mathbb");
+    expect(html).toContain("boxed");
+  });
+
+  it("highlights prose without corrupting formula output", () => {
+    const html = renderMarkdown("Result: $x_k + 1$.", "result");
+
+    expect(html).toContain("<mark>Result</mark>");
+    expect(html).toContain('class="katex"');
+  });
+
+  it("creates an isolated renderer with the same safety and search behavior", () => {
+    const renderer = createMarkdownRenderer();
+    const html = renderer("## Result\n\nResult: $x_k + 1$.\n\n<script>alert(1)</script>", "result");
+
+    expect(html).toContain("<h2><mark>Result</mark></h2>");
+    expect(html).toContain("<mark>Result</mark>");
+    expect(html).toContain('class="katex"');
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("passes fenced code to a custom highlighter while keeping math fences intact", () => {
+    const renderer = createMarkdownRenderer((source, language) => {
+      return `<pre data-language="${language}">${source}</pre>`;
+    });
+    const html = renderer('```python\nprint("hello")\n```\n\n```math\nx^2\n```');
+
+    expect(html).toContain('<pre data-language="python">');
+    expect(html).toContain('class="katex-display"');
+  });
+});
