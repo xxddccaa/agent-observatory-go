@@ -164,9 +164,10 @@ cp "${TMP_DIR}/${APP_NAME}" "$STAGE_BIN"
 chmod 0755 "$STAGE_BIN"
 # Stage inside destination directory so mv is an atomic same-filesystem replace.
 mv -f "$STAGE_BIN" "${INSTALL_DIR}/${APP_NAME}"
+ln -sf "${APP_NAME}" "${INSTALL_DIR}/aobs"
 
 INSTALLED_VERSION="$("${INSTALL_DIR}/${APP_NAME}" --version 2>/dev/null || true)"
-echo "Installed ${INSTALLED_VERSION:-${APP_NAME}} to ${INSTALL_DIR}/${APP_NAME}"
+echo "Installed ${INSTALLED_VERSION:-${APP_NAME}} to ${INSTALL_DIR}/${APP_NAME} (short alias: ${INSTALL_DIR}/aobs)"
 
 case ":${PATH:-}:" in
   *":${INSTALL_DIR}:"*) ;;

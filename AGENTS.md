@@ -11,8 +11,9 @@
 
 `agent-observatory` 是**本地优先、只读、单人无登录**的多 coding agent 会话观测台（Go + SQLite 单文件单二进制架构，内嵌 Vue 3 SPA）。
 
-- 默认以“单实例本地守护启动器 + 同类服务感知的端口顺延”模式运行：直接执行 `agent-observatory` 时后台启动并打开浏览器；提供 `--foreground`、`status`、`stop`、`index --once` 与 `version` 子命令。
+- 默认以“单实例本地守护启动器 + 同类服务感知的端口顺延”模式运行：直接执行 `agent-observatory`（或短命令别名 `aobs`）时后台启动并打开浏览器；提供 `--foreground`、`status`、`stop`、`index --once` 与 `version` 子命令。
 - 唯一持久化数据库为单文件 SQLite（`modernc.org/sqlite` 纯 Go 驱动，开启 `WAL` 模式，原始事件 `raw_json` 使用 `zstd` 压缩存储）。
+- **本机 macOS 开发后交付约定**：在本机完成功能/修复开发并跑通下方全量验证后，执行 `./scripts/local-mac.sh`（重编前端与 macOS 二进制，安装 `agent-observatory` 和短命令 `aobs` 到 `~/.local/bin`，重启旧守护进程并自动在浏览器打开 Web 页面供查看效果）。
 
 ## 不可触碰边界
 

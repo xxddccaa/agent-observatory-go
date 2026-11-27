@@ -83,6 +83,8 @@ try {
   $StageExe = Join-Path $InstallDir ".$AppName.exe.tmp"
   Copy-Item -Path $ExtractedExe -Destination $StageExe -Force
   Move-Item -Path $StageExe -Destination $DestExe -Force
+  $AliasCmd = Join-Path $InstallDir "aobs.cmd"
+  Set-Content -Path $AliasCmd -Value "@echo off`r`n`"%~dp0$AppName.exe`" %*`r`n" -Encoding Ascii
 
   $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $PathEntries = if ($UserPath) { $UserPath -split ";" } else { @() }

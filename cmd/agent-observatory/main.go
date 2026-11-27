@@ -234,7 +234,7 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 }
 
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintf(w, `Usage: %s [command] [flags]
+	_, _ = fmt.Fprintf(w, `Usage: %s [command] [flags] (short alias: aobs)
 
 Commands:
   up (default)   Start background daemon if needed and open Web UI

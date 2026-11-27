@@ -314,3 +314,73 @@ func TestIndexOnceSubcommandWithExtraRoot(t *testing.T) {
 		t.Fatalf("expected >= 1 indexed session from extra root, got %+v", stats)
 	}
 }
+
+func TestShortAliasSymlinkLaunchStatusAndStop(t *testing.T) {
+	binPath := buildTestBinary(t)
+	aliasDir := t.TempDir()
+	aliasName := "aobs"
+	if runtime.GOOS == "windows" {
+		aliasName = "aobs.exe"
+	}
+	aliasPath := filepath.Join(aliasDir, aliasName)
+	if runtime.GOOS == "windows" {
+		if err := os.Link(binPath, aliasPath); err != nil {
+			t.Fatalf("link alias binary: %v", err)
+		}
+	} else {
+		if err := os.Symlink(binPath, aliasPath); err != nil {
+			t.Fatalf("symlink alias binary: %v", err)
+		}
+	}
+
+	verOut, err := exec.Command(aliasPath, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aobs --version failed: %v\n%s", err, verOut)
+	}
+	if !strings.HasPrefix(string(verOut), "agent-observatory ") {
+		t.Fatalf("unexpected aobs --version output: %q", string(verOut))
+	}
+
+	helpOut, err := exec.Command(aliasPath, "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aobs --help failed: %v\n%s", err, helpOut)
+	}
+	if !strings.Contains(string(helpOut), "short alias: aobs") {
+		t.Fatalf("expected help output to document short alias aobs, got %q", string(helpOut))
+	}
+
+	dataDir := filepath.Join(t.TempDir(), "data")
+	homeDir := t.TempDir()
+	t.Cleanup(func() {
+		cmd := exec.Command(aliasPath, "stop", "--data-dir", dataDir)
+		cmd.Env = append(os.Environ(), "HOME="+homeDir)
+		_ = cmd.Run()
+	})
+
+	startCmd := exec.Command(aliasPath, "--data-dir", dataDir, "--listen", "127.0.0.1:0", "--no-open")
+	startCmd.Env = append(os.Environ(), "HOME="+homeDir)
+	startOut, err := startCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("aobs start failed: %v\n%s", err, startOut)
+	}
+
+	statusCmd := exec.Command(aliasPath, "status", "--json", "--data-dir", dataDir)
+	statusCmd.Env = append(os.Environ(), "HOME="+homeDir)
+	statusOut, err := statusCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("aobs status failed: %v\n%s", err, statusOut)
+	}
+	var info launcher.StatusInfo
+	if err := json.Unmarshal(statusOut, &info); err != nil {
+		t.Fatalf("decode status json: %v\n%s", err, statusOut)
+	}
+	if info.Status != "running" || info.URL == "" {
+		t.Fatalf("unexpected status info via aobs: %+v", info)
+	}
+
+	stopCmd := exec.Command(aliasPath, "stop", "--data-dir", dataDir)
+	stopCmd.Env = append(os.Environ(), "HOME="+homeDir)
+	if out, err := stopCmd.CombinedOutput(); err != nil {
+		t.Fatalf("aobs stop failed: %v\n%s", err, out)
+	}
+}

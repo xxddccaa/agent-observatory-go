@@ -26,16 +26,18 @@ class AgentObservatory < Formula
 
   def install
     bin.install "agent-observatory"
+    bin.install_symlink "agent-observatory" => "aobs"
   end
 
   def caveats
     <<~EOS
-      Run `agent-observatory` to start the single-instance local daemon and open http://127.0.0.1:8125.
-      Run `agent-observatory --foreground` to run in the foreground without detaching.
+      Run `aobs` (or `agent-observatory`) to start the single-instance local daemon and open http://127.0.0.1:8125.
+      Run `aobs --foreground` to run in the foreground without detaching.
     EOS
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/agent-observatory --version")
+    assert_match version.to_s, shell_output("#{bin}/aobs --version")
   end
 end

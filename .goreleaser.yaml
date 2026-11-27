@@ -62,5 +62,9 @@ brews:
     homepage: "https://github.com/agent-observatory/agent-observatory-go"
     description: "Local-first, read-only multi-agent coding session observatory"
     license: "MIT"
+    install: |
+      bin.install "agent-observatory"
+      bin.install_symlink "agent-observatory" => "aobs"
     test: |
       assert_match version.to_s, shell_output("#{bin}/agent-observatory --version")
+      assert_match version.to_s, shell_output("#{bin}/aobs --version")
