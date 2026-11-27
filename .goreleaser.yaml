@@ -54,12 +54,12 @@ changelog:
 brews:
   - name: agent-observatory
     repository:
-      owner: agent-observatory
+      owner: xxddccaa
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     skip_upload: "{{ if not .Env.HOMEBREW_TAP_TOKEN }}true{{ else }}auto{{ end }}"
     directory: Formula
-    homepage: "https://github.com/agent-observatory/agent-observatory-go"
+    homepage: "https://github.com/xxddccaa/agent-observatory-go"
     description: "Local-first, read-only multi-agent coding session observatory"
     license: "MIT"
     install: |

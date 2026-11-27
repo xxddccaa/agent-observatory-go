@@ -2,7 +2,7 @@
 param(
   [string]$Version = $env:AGENT_OBS_VERSION,
   [string]$InstallDir = $(if ($env:AGENT_OBS_INSTALL_DIR) { $env:AGENT_OBS_INSTALL_DIR } else { Join-Path $env:LocalAppData "agent-observatory\bin" }),
-  [string]$Repo = $(if ($env:AGENT_OBS_REPO) { $env:AGENT_OBS_REPO } else { "agent-observatory/agent-observatory-go" }),
+  [string]$Repo = $(if ($env:AGENT_OBS_REPO) { $env:AGENT_OBS_REPO } else { "xxddccaa/agent-observatory-go" }),
   [string]$BaseUrl = $env:AGENT_OBS_BASE_URL,
   [switch]$DryRun
 )

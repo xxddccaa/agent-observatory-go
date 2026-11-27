@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="${AGENT_OBS_REPO:-agent-observatory/agent-observatory-go}"
+REPO="${AGENT_OBS_REPO:-xxddccaa/agent-observatory-go}"
 INSTALL_DIR="${AGENT_OBS_INSTALL_DIR:-${HOME}/.local/bin}"
 VERSION="${AGENT_OBS_VERSION:-}"
 BASE_URL="${AGENT_OBS_BASE_URL:-}"
@@ -18,7 +18,7 @@ Usage:
 Environment variables:
   AGENT_OBS_VERSION      Version tag to install (defaults to latest release)
   AGENT_OBS_INSTALL_DIR  Destination bin directory (default: \$HOME/.local/bin)
-  AGENT_OBS_REPO         GitHub owner/repo (default: agent-observatory/agent-observatory-go)
+  AGENT_OBS_REPO         GitHub owner/repo (default: xxddccaa/agent-observatory-go)
   AGENT_OBS_BASE_URL     Override archive base URL (e.g. local file:// or mirror)
 EOF
 }
