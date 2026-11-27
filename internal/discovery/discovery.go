@@ -7,20 +7,26 @@ import (
 	"strings"
 )
 
-// KnownLayouts maps V1 coding agents to their default read-only session roots.
+// KnownLayouts maps supported coding agents to their default read-only session roots.
 var KnownLayouts = map[string][]string{
 	"codex":  {"~/.codex/sessions"},
 	"claude": {"~/.claude/projects"},
 	"gemini": {"~/.gemini/tmp"},
 	"agy":    {"~/.gemini/antigravity-cli/brain"},
+	"xdcode": {"~/.xdcode/sessions", "~/.xdcode/archived_sessions"},
+	"pi":     {"~/.pi/agent/sessions"},
+	"dsh":    {"~/.dsh/sessions"},
 }
 
-// ImplementedAgents lists V1 agents with specialized read-only adapters.
+// ImplementedAgents lists coding agents with specialized read-only adapters.
 var ImplementedAgents = map[string]bool{
 	"codex":  true,
 	"claude": true,
 	"gemini": true,
 	"agy":    true,
+	"xdcode": true,
+	"pi":     true,
+	"dsh":    true,
 }
 
 // DetectedRoot describes one probed local agent directory.

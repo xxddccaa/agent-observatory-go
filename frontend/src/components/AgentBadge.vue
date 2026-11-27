@@ -45,6 +45,24 @@ const normalized = computed(() => props.agent.trim().toLowerCase() || "generic")
   color: #8cc2ff;
 }
 
+.agent-badge[data-agent="xdcode"] {
+  border-color: color-mix(in srgb, #9aa8f2 48%, var(--border));
+  background: color-mix(in srgb, #9aa8f2 12%, transparent);
+  color: #b2bdf7;
+}
+
+.agent-badge[data-agent="pi"] {
+  border-color: color-mix(in srgb, #6fc9d8 48%, var(--border));
+  background: color-mix(in srgb, #6fc9d8 12%, transparent);
+  color: #8ddce8;
+}
+
+.agent-badge[data-agent="dsh"] {
+  border-color: color-mix(in srgb, #c59af0 48%, var(--border));
+  background: color-mix(in srgb, #c59af0 12%, transparent);
+  color: #cda9f1;
+}
+
 .agent-badge[data-agent="generic"] {
   border-color: var(--border);
   background: var(--panel-2);

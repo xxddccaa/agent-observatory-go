@@ -165,3 +165,14 @@ func TestSQLiteSignatureIgnoresSHMAndDetectsWALOrCounter(t *testing.T) {
 		t.Fatalf("expected change counter bump to alter signature: %+v", sigAfterCounter)
 	}
 }
+
+func TestKnownLayoutsIncludeXDCodePiAndDsh(t *testing.T) {
+	for _, agent := range []string{"codex", "claude", "gemini", "agy", "xdcode", "pi", "dsh"} {
+		if !ImplementedAgents[agent] {
+			t.Fatalf("expected ImplementedAgents[%q] = true", agent)
+		}
+		if len(KnownLayouts[agent]) == 0 {
+			t.Fatalf("expected non-empty KnownLayouts[%q]", agent)
+		}
+	}
+}

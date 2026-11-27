@@ -224,8 +224,11 @@ describe("multi-agent filters and labels", () => {
     const select = mounted.root.querySelector<HTMLSelectElement>(
       'select[aria-label="Filter sessions by agent"]'
     );
-    expect(select?.querySelectorAll("option")).toHaveLength(6);
+    expect(select?.querySelectorAll("option")).toHaveLength(9);
     expect(mounted.root.textContent).toContain("Codex");
+    expect(select!.querySelector<HTMLOptionElement>('option[value="xdcode"]')?.textContent).toBe("XDCode");
+    expect(select!.querySelector<HTMLOptionElement>('option[value="pi"]')?.textContent).toBe("Pi");
+    expect(select!.querySelector<HTMLOptionElement>('option[value="dsh"]')?.textContent).toBe("DSH");
     const agy = select!.querySelector<HTMLOptionElement>('option[value="agy"]');
     expect(agy?.textContent).toBe("AGY");
     const gemini = select!.querySelector<HTMLOptionElement>('option[value="gemini"]');
@@ -250,7 +253,7 @@ describe("multi-agent filters and labels", () => {
     const select = mounted.root.querySelector<HTMLSelectElement>(
       'select[aria-label="Filter insights by agent"]'
     );
-    expect(select?.querySelectorAll("option")).toHaveLength(6);
+    expect(select?.querySelectorAll("option")).toHaveLength(9);
     expect(mounted.root.textContent).toContain("Cross-agent comparison");
     expect(mounted.root.textContent).toContain("Codex");
     expect(mounted.root.textContent).toContain("Claude");

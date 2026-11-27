@@ -38,12 +38,12 @@ describe("Insights API", () => {
       since: "2026-08-01T00:00:00Z",
       until: "2026-08-02T00:00:00Z",
       workspace: "/tmp/a b",
-      agent: "stepcode",
+      agent: "xdcode",
       confidence: "derived",
     });
 
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/insights/overview?from=2026-08-01T00%3A00%3A00Z&to=2026-08-02T00%3A00%3A00Z&workspace_id=%2Ftmp%2Fa+b&agent=stepcode"
+      "/api/insights/overview?from=2026-08-01T00%3A00%3A00Z&to=2026-08-02T00%3A00%3A00Z&workspace_id=%2Ftmp%2Fa+b&agent=xdcode"
     );
     expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ credentials: "same-origin" }));
   });

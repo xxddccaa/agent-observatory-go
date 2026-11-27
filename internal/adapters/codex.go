@@ -49,25 +49,40 @@ var (
 	codexExitCodeRe   = regexp.MustCompile(`exited with code (-?\d+)`)
 )
 
-// CodexAdapter indexes Codex CLI rollout JSONL and .jsonl.zst transcripts.
+// CodexAdapter indexes Codex-compatible rollout JSONL and .jsonl.zst transcripts.
 type CodexAdapter struct {
-	root          string
-	parserVersion string
-	tree          *discovery.TreeCache
+	root           string
+	agent          string
+	sourceKind     string
+	identityPrefix string
+	parserVersion  string
+	tree           *discovery.TreeCache
 }
 
 // NewCodexAdapter creates a Codex rollout adapter rooted at sessionsDir.
 func NewCodexAdapter(sessionsDir string) *CodexAdapter {
+	return newCodexVariantAdapter(sessionsDir, "codex", "codex_jsonl", "codex")
+}
+
+// NewXDCodeAdapter creates an XDCode rollout adapter reusing Codex JSONL parsing.
+func NewXDCodeAdapter(sessionsDir string) *CodexAdapter {
+	return newCodexVariantAdapter(sessionsDir, "xdcode", "xdcode_jsonl", "xdcode")
+}
+
+func newCodexVariantAdapter(sessionsDir, agent, sourceKind, identityPrefix string) *CodexAdapter {
 	expanded := discovery.ExpandPath(sessionsDir)
 	return &CodexAdapter{
-		root:          expanded,
-		parserVersion: "4",
-		tree:          discovery.NewTreeCache(expanded, "rollout-*.jsonl*", nil),
+		root:           expanded,
+		agent:          agent,
+		sourceKind:     sourceKind,
+		identityPrefix: identityPrefix,
+		parserVersion:  "4",
+		tree:           discovery.NewTreeCache(expanded, "rollout-*.jsonl*", nil),
 	}
 }
 
-func (a *CodexAdapter) Kind() string          { return "codex_jsonl" }
-func (a *CodexAdapter) Agent() string         { return "codex" }
+func (a *CodexAdapter) Kind() string          { return a.sourceKind }
+func (a *CodexAdapter) Agent() string         { return a.agent }
 func (a *CodexAdapter) ParserVersion() string { return a.parserVersion }
 
 func (a *CodexAdapter) WatchPaths(src SourceDescriptor) []string {
@@ -77,7 +92,7 @@ func (a *CodexAdapter) WatchPaths(src SourceDescriptor) []string {
 // Identity returns one stable identity across plain .jsonl and compressed .jsonl.zst siblings.
 func (a *CodexAdapter) Identity(path string) string {
 	canonical := strings.TrimSuffix(path, ".zst")
-	return "codex:" + sha256Hex([]byte(discovery.CachedResolve(canonical)))
+	return a.identityPrefix + ":" + sha256Hex([]byte(discovery.CachedResolve(canonical)))
 }
 
 func (a *CodexAdapter) Discover(full bool) ([]SourceDescriptor, error) {
@@ -153,6 +168,10 @@ func (a *CodexAdapter) Plan(src SourceDescriptor, cp *model.IndexCheckpoint) (So
 func (a *CodexAdapter) Parse(plan SourcePlan, existing *model.AgentSession) (*ParsedSource, error) {
 	src := plan.Source
 	realPath := discovery.CachedResolve(src.Path)
+	rolloutRealPath := realPath
+	if a.identityPrefix != "codex" {
+		rolloutRealPath = a.identityPrefix + ":" + realPath
+	}
 	nowStr := model.FormatUTC(time.Now())
 	info, err := os.Stat(src.Path)
 	if err != nil {
@@ -165,7 +184,7 @@ func (a *CodexAdapter) Parse(plan SourcePlan, existing *model.AgentSession) (*Pa
 		SourceKind:          a.Kind(),
 		SourceIdentity:      src.Identity,
 		RolloutPath:         strPtr(src.Path),
-		RolloutRealPath:     strPtr(realPath),
+		RolloutRealPath:     strPtr(rolloutRealPath),
 		SourcePath:          strPtr(realPath),
 		RolloutFormat:       "jsonl",
 		SourceFormat:        "jsonl",
@@ -185,7 +204,7 @@ func (a *CodexAdapter) Parse(plan SourcePlan, existing *model.AgentSession) (*Pa
 	if !resetEvents && existing != nil {
 		sess = *existing
 		sess.RolloutPath = strPtr(src.Path)
-		sess.RolloutRealPath = strPtr(realPath)
+		sess.RolloutRealPath = strPtr(rolloutRealPath)
 		sess.SourcePath = strPtr(realPath)
 		sess.UpdatedAt = nowStr
 		startOffset = existing.LastIndexedOffset

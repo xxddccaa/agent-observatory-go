@@ -441,3 +441,199 @@ func TestGenericAdapterFallback(t *testing.T) {
 		t.Fatalf("unexpected generic projection: sess=%+v msgs=%d", sess, len(proj.Messages))
 	}
 }
+
+func TestXDCodeAdapterDiscoverParseAndProject(t *testing.T) {
+	root := t.TempDir()
+	subDir := filepath.Join(root, "2026", "11", "03")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(subDir, "rollout-2026-11-03T14-24-01-xd-1.jsonl")
+	content := strings.Join([]string{
+		`{"timestamp":"2026-11-03T06:24:01.470Z","type":"session_meta","payload":{"id":"xd-1","cwd":"/tmp/xdrepo","originator":"xdcode-tui","cli_version":"0.163.0","model_provider":"ZhiYue"}}`,
+		`{"timestamp":"2026-11-03T06:24:02Z","type":"turn_context","payload":{"model":"gpt-6.1-sol"}}`,
+		`{"timestamp":"2026-11-03T06:24:03Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t-1"}}`,
+		`{"timestamp":"2026-11-03T06:24:04Z","type":"event_msg","payload":{"type":"user_message","message":"Inspect xdcode"}}`,
+		`{"timestamp":"2026-11-03T06:24:05Z","type":"event_msg","payload":{"type":"agent_message","message":"XDCode ready"}}`,
+		`{"timestamp":"2026-11-03T06:24:06Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := NewXDCodeAdapter(root)
+	sources, err := adapter.Discover(true)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("XDCode Discover = %+v, err=%v", sources, err)
+	}
+	if sources[0].Agent != "xdcode" || sources[0].Kind != "xdcode_jsonl" || !strings.HasPrefix(sources[0].Identity, "xdcode:") {
+		t.Fatalf("unexpected xdcode descriptor: %+v", sources[0])
+	}
+	plan, err := adapter.Plan(sources[0], nil)
+	if err != nil || plan.Action != PlanRebuild {
+		t.Fatalf("XDCode Plan = %+v, err=%v", plan, err)
+	}
+	parsed, err := adapter.Parse(plan, nil)
+	if err != nil {
+		t.Fatalf("XDCode Parse error = %v", err)
+	}
+	sess, proj, err := adapter.Project(parsed.Session, assignFakeEventIDs(parsed.NewEvents))
+	if err != nil {
+		t.Fatalf("XDCode Project error = %v", err)
+	}
+	if sess.Agent != "xdcode" || sess.SourceKind != "xdcode_jsonl" || sess.TurnCount != 1 || len(proj.Messages) != 2 {
+		t.Fatalf("unexpected xdcode session/messages: sess=%+v msgs=%d", sess, len(proj.Messages))
+	}
+	if sess.RolloutRealPath == nil || !strings.HasPrefix(*sess.RolloutRealPath, "xdcode:") {
+		t.Fatalf("expected xdcode prefixed RolloutRealPath, got %v", sess.RolloutRealPath)
+	}
+}
+
+func TestPiAdapterActiveBranchIncrementalAndBounded(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "sessions", "session-pi.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rows := []string{
+		`{"type":"session","version":3,"id":"pi-session-1","timestamp":"2026-08-21T10:00:00Z","cwd":"/tmp/pi-project"}`,
+		`{"type":"model_change","id":"m1","parentId":null,"timestamp":"2026-08-21T10:00:01Z","provider":"demo","modelId":"pi-model"}`,
+		`{"type":"message","id":"sys1","parentId":"m1","timestamp":"2026-08-21T10:00:03Z","message":{"role":"system","content":[{"type":"text","text":"system policy"}]}}`,
+		`{"type":"message","id":"u1","parentId":"sys1","timestamp":"2026-08-21T10:00:04Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
+		`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-21T10:00:05Z","message":{"role":"assistant","model":"pi-model","stopReason":"toolUse","content":[{"type":"thinking","thinking":"reasoning summary"},{"type":"text","text":"working"},{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"printf ok"}}],"usage":{"input":3,"output":10,"cacheRead":2,"cacheWrite":1,"reasoning":5,"totalTokens":16}}}`,
+		`{"type":"message","id":"abandoned","parentId":"a1","timestamp":"2026-08-21T10:00:06Z","message":{"role":"assistant","content":[{"type":"text","text":"abandoned branch"}],"stopReason":"stop"}}`,
+		`{"type":"message","id":"tr1","parentId":"a1","timestamp":"2026-08-21T10:00:07Z","message":{"role":"toolResult","toolCallId":"call-1","toolName":"bash","content":[{"type":"text","text":"ok"}],"details":{"exitCode":0},"isError":false}}`,
+		`{"type":"message","id":"a2","parentId":"tr1","timestamp":"2026-08-21T10:00:08Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","usage":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":3}}}`,
+		`{"type":"future_custom","id":"unknown-1","parentId":"a2","timestamp":"2026-08-21T10:00:09Z","payload":{"opaque":true}}`,
+		`{"type":"compaction","id":"compact-1","parentId":"unknown-1","timestamp":"2026-08-21T10:00:10Z","summary":"compacted context"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := NewPiAdapter(root)
+	sources, err := adapter.Discover(true)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("Pi Discover = %+v, err=%v", sources, err)
+	}
+	plan1, err := adapter.Plan(sources[0], nil)
+	if err != nil || plan1.Action != PlanRebuild {
+		t.Fatalf("Pi initial Plan = %+v, err=%v", plan1, err)
+	}
+	parsed1, err := adapter.Parse(plan1, nil)
+	if err != nil {
+		t.Fatalf("Pi Parse error = %v", err)
+	}
+	allEvents := assignFakeEventIDs(parsed1.NewEvents)
+	sess, proj, err := adapter.Project(parsed1.Session, allEvents)
+	if err != nil {
+		t.Fatalf("Pi Project error = %v", err)
+	}
+	if sess.Agent != "pi" || sess.SourceKind != "pi_jsonl" || sess.ThreadID != "pi-session-1" {
+		t.Fatalf("unexpected Pi identity fields: %+v", sess)
+	}
+	if sess.DisplayTitle == nil || *sess.DisplayTitle != "hello" || sess.Model == nil || *sess.Model != "pi-model" {
+		t.Fatalf("unexpected Pi metadata: %+v", sess)
+	}
+	if sess.TurnCount != 1 || sess.InputTokens != 4 || sess.CachedInputTokens != 2 || sess.CacheCreationInputTokens != 1 || sess.OutputTokens != 12 || sess.ReasoningOutputTokens != 5 || sess.TotalTokens != 19 {
+		t.Fatalf("unexpected Pi token/turn aggregation: %+v", sess)
+	}
+	for _, msg := range proj.Messages {
+		if strings.Contains(msg.Text, "abandoned branch") {
+			t.Fatalf("expected abandoned branch excluded from projected messages, got %q", msg.Text)
+		}
+	}
+	if len(proj.ToolCalls) != 1 || proj.ToolCalls[0].Status != "ok" || proj.ToolCalls[0].ExitCode == nil || *proj.ToolCalls[0].ExitCode != 0 {
+		t.Fatalf("unexpected Pi tool call projection: %+v", proj.ToolCalls)
+	}
+
+	// Unterminated trailing line must not advance cursor past the complete newline boundary.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(`{"type":"message","id":"u2","parentId":"compact-1","timestamp":"2026-08-21T10:01:00Z","message":{"role":"user","content":[{"type":"text","text":"second"}]}}` + "\n" + `{"type":"message"`)
+	_ = f.Close()
+
+	cp := &model.IndexCheckpoint{
+		ParserVersion:     adapter.ParserVersion(),
+		Status:            "indexed",
+		FileSize:          sess.FileSize,
+		FileMtimeNs:       sess.FileMtimeNs,
+		LastIndexedOffset: sess.LastIndexedOffset,
+		LastIndexedLine:   sess.LastIndexedLine,
+		CursorJSON:        parsed1.CursorJSON,
+		FingerprintJSON:   parsed1.FingerprintJSON,
+	}
+	plan2, err := adapter.Plan(sources[0], cp)
+	if err != nil || plan2.Action != PlanAppend {
+		t.Fatalf("Pi PlanAppend expected after append, got %+v, err=%v", plan2, err)
+	}
+	parsed2, err := adapter.Parse(plan2, &sess)
+	if err != nil {
+		t.Fatalf("Pi Parse append error = %v", err)
+	}
+	if len(parsed2.NewEvents) != 1 {
+		t.Fatalf("expected only 1 complete appended Pi event (partial tail ignored), got %d", len(parsed2.NewEvents))
+	}
+}
+
+func TestDshAdapterZstdStreamAndProjection(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "x", "session.jsonl.zstd")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join([]string{
+		`{"type":"session","id":"s1","createdAt":"2026-01-01T00:00:00Z","cwd":"/repo","parentSession":"p"}`,
+		`{"type":"turn/start","data":{"turn":1},"time":"2026-01-01T00:00:01Z"}`,
+		`{"type":"user/message","data":{"turn":1,"role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]}}`,
+		`{"type":"request/context","data":{"provider":"stepcode","model":"dsh-model"}}`,
+		`{"type":"assistant/message","data":{"turn":1,"step":1,"message":{"role":"assistant","content":[{"type":"reasoning","text":"think"},{"type":"text","text":"world"}]},"usage":{"inputTokens":2,"outputTokens":3}}}`,
+		`{"type":"tool/call","data":{"turn":1,"step":1,"callId":"c1","name":"shell","arguments":"{\"cmd\":\"ls\"}"}}`,
+		`{"type":"tool/result","data":{"turn":1,"step":1,"message":{"role":"tool","content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}}}`,
+		`{"type":"turn/end","data":{"turn":1,"reason":{"kind":"completed"}}}`,
+		`{"type":"mystery","data":{"x":"nul:\u0000"}}`,
+	}, "\n") + "\n"
+	enc, _ := zstd.NewWriter(nil)
+	if err := os.WriteFile(path, enc.EncodeAll([]byte(rows), nil), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := NewDshAdapter(root)
+	sources, err := adapter.Discover(true)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("DSH Discover = %+v, err=%v", sources, err)
+	}
+	plan, err := adapter.Plan(sources[0], nil)
+	if err != nil || plan.Action != PlanRebuild {
+		t.Fatalf("DSH Plan = %+v, err=%v", plan, err)
+	}
+	parsed, err := adapter.Parse(plan, nil)
+	if err != nil {
+		t.Fatalf("DSH Parse error = %v", err)
+	}
+	sess, proj, err := adapter.Project(parsed.Session, assignFakeEventIDs(parsed.NewEvents))
+	if err != nil {
+		t.Fatalf("DSH Project error = %v", err)
+	}
+	if sess.Agent != "dsh" || sess.SourceKind != "dsh_jsonl" || sess.ThreadID != "s1" {
+		t.Fatalf("unexpected DSH identity: %+v", sess)
+	}
+	if sess.ParentSessionID == nil || *sess.ParentSessionID != "p" || !sess.IsSubagent {
+		t.Fatalf("expected parentSession=p, got %+v", sess)
+	}
+	if sess.Model == nil || *sess.Model != "dsh-model" || sess.TotalTokens != 5 || sess.TurnCount != 1 {
+		t.Fatalf("unexpected DSH metrics/model: %+v", sess)
+	}
+	if len(proj.ToolCalls) != 1 || proj.ToolCalls[0].OutputText == nil || *proj.ToolCalls[0].OutputText != "ok" || proj.ToolCalls[0].Status != "completed" {
+		t.Fatalf("unexpected DSH tool calls: %+v", proj.ToolCalls)
+	}
+	if len(proj.Messages) != 3 {
+		t.Fatalf("expected 3 projected messages (user+reasoning+final), got %d", len(proj.Messages))
+	}
+	lastEv := parsed.NewEvents[len(parsed.NewEvents)-1]
+	if lastEv.IsKnown || strings.Contains(string(lastEv.RawJSON), "\x00") || !strings.Contains(string(lastEv.RawJSON), "nul:") {
+		t.Fatalf("expected unknown sanitized last event, got known=%v raw=%s", lastEv.IsKnown, lastEv.RawJSON)
+	}
+}

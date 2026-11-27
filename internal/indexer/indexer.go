@@ -118,12 +118,18 @@ func buildDefaultAdapters(store *storage.Store, extraRoots, layouts map[string][
 			switch ag {
 			case "codex":
 				out = append(out, adapters.NewCodexAdapter(root))
+			case "xdcode":
+				out = append(out, adapters.NewXDCodeAdapter(root))
 			case "claude":
 				out = append(out, adapters.NewClaudeAdapter(root))
 			case "gemini":
 				out = append(out, adapters.NewGeminiAdapter(root))
 			case "agy":
 				out = append(out, adapters.NewAgyAdapter(root, agyReader))
+			case "pi":
+				out = append(out, adapters.NewPiAdapter(root))
+			case "dsh":
+				out = append(out, adapters.NewDshAdapter(root))
 			default:
 				out = append(out, adapters.NewGenericAdapter(root, ag))
 			}

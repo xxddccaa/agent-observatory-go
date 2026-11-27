@@ -12,7 +12,18 @@ import (
 	"github.com/agent-observatory/agent-observatory-go/internal/adapters"
 	"github.com/agent-observatory/agent-observatory-go/internal/model"
 	"github.com/agent-observatory/agent-observatory-go/internal/storage"
+	"github.com/klauspost/compress/zstd"
 )
+
+func compressZstdForTest(t *testing.T, payload string) []byte {
+	t.Helper()
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = enc.Close() }()
+	return enc.EncodeAll([]byte(payload), nil)
+}
 
 func TestIndexerEndToEndIncrementalAndErrorIsolation(t *testing.T) {
 	ctx := context.Background()
@@ -207,5 +218,68 @@ func TestIndexerClaudeAndGeminiSubagentsWithoutParentFKFailure(t *testing.T) {
 		if !s.IsSubagent || s.ParentSessionID == nil || *s.ParentSessionID == "" {
 			t.Fatalf("expected subagent parent_session_id preserved, got %+v", s)
 		}
+	}
+}
+
+func TestIndexerIngestsXDCodePiAndDshTogether(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("storage.Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	xdRoot := filepath.Join(t.TempDir(), "xdcode-sessions")
+	if err := os.MkdirAll(xdRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdRoot, "rollout-1.jsonl"), []byte(strings.Join([]string{
+		`{"timestamp":"2026-11-27T01:00:00Z","type":"session_meta","payload":{"id":"xd-idx-1","cwd":"/tmp/xd"}}`,
+		`{"timestamp":"2026-11-27T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"xd hi"}}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	piRoot := filepath.Join(t.TempDir(), "pi-sessions")
+	if err := os.MkdirAll(piRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(piRoot, "pi-1.jsonl"), []byte(strings.Join([]string{
+		`{"type":"session","id":"pi-idx-1","timestamp":"2026-11-27T02:00:00Z","cwd":"/tmp/pi"}`,
+		`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-11-27T02:00:01Z","message":{"role":"user","content":[{"type":"text","text":"pi hi"}]}}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dshRoot := filepath.Join(t.TempDir(), "dsh-sessions")
+	if err := os.MkdirAll(filepath.Join(dshRoot, "r1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dshRaw := strings.Join([]string{
+		`{"type":"session","id":"dsh-idx-1","createdAt":"2026-11-27T03:00:00Z","cwd":"/tmp/dsh","parentSession":"dsh-parent-missing"}`,
+		`{"type":"user/message","time":"2026-11-27T03:00:01Z","data":{"source":{"kind":"user"},"text":"dsh hi"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dshRoot, "r1", "session.jsonl.zstd"), compressZstdForTest(t, dshRaw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := New(store, Options{
+		Layouts: map[string][]string{
+			"xdcode": {xdRoot},
+			"pi":     {piRoot},
+			"dsh":    {dshRoot},
+		},
+	})
+	stats, err := idx.RunOnce(ctx, true)
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if stats.Failures != 0 || stats.Indexed != 3 {
+		t.Fatalf("expected 3 indexed (xdcode+pi+dsh) and 0 failures, got %+v (lastErr=%q)", stats, idx.Snapshot().LastError)
+	}
+
+	list, err := store.ListSessions(ctx, model.SessionListFilter{IncludeSubagents: true, Limit: 10})
+	if err != nil || len(list.Sessions) != 3 {
+		t.Fatalf("ListSessions = %+v, err=%v", list, err)
 	}
 }
