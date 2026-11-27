@@ -1,0 +1,32 @@
+# Local agent-forge state & specs (user-confirmed local-only tracking)
+.agent-forge/
+
+# Go build & test artifacts
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Frontend build & dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+.playwright-mcp/
+
+# Local runtime & secrets
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+*.jsonl
+*.pid
+*.sock

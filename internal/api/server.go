@@ -1,0 +1,302 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"io/fs"
+	"net"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/agent-observatory/agent-observatory-go/internal/config"
+	"github.com/agent-observatory/agent-observatory-go/internal/model"
+	"github.com/agent-observatory/agent-observatory-go/internal/storage"
+)
+
+const (
+	ServiceHeaderName  = "X-Agent-Observatory-Service"
+	ServiceHeaderValue = config.AppName
+)
+
+type ctxKey string
+
+const requestIDKey ctxKey = "request_id"
+
+type Server struct {
+	cfg     config.Config
+	store   *storage.Store
+	webFS   fs.FS
+	handler http.Handler
+}
+
+func NewServer(cfg config.Config, store *storage.Store, webFS fs.FS) *Server {
+	s := &Server{
+		cfg:   cfg,
+		store: store,
+		webFS: webFS,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/meta", s.handleMeta)
+	mux.HandleFunc("GET /api/health/live", s.handleLive)
+	mux.HandleFunc("GET /api/health/ready", s.handleReady)
+	mux.HandleFunc("GET /api/health", s.handleReady)
+	mux.HandleFunc("/", s.handleWebOrNotFound)
+
+	s.handler = s.withRequestID(s.withAccessGuard(mux))
+	return s
+}
+
+func (s *Server) Handler() http.Handler {
+	return s.handler
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, model.MetaResponse{
+		App:         config.AppName,
+		Version:     config.Version,
+		DataDirHash: config.DataDirHash(s.cfg.DataDir),
+	})
+}
+
+func (s *Server) handleLive(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, model.LiveHealth{
+		Status:  "ok",
+		Version: config.Version,
+	})
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	components := map[string]model.ComponentHealth{}
+	recovery := []string{}
+	status := "ok"
+
+	if err := s.store.Ping(ctx); err != nil {
+		status = "degraded"
+		components["sqlite"] = model.ComponentHealth{
+			Status:  "down",
+			Healthy: false,
+			Message: "SQLite store is unreachable.",
+			Detail:  "SQLite store is unreachable.",
+		}
+		recovery = append(recovery, "Inspect observatory.db permissions and local logs.")
+	} else {
+		components["sqlite"] = model.ComponentHealth{
+			Status:  "up",
+			Healthy: true,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, model.ReadyHealth{
+		Status:          status,
+		Version:         config.Version,
+		Environment:     s.cfg.Environment,
+		Components:      components,
+		RecoveryActions: recovery,
+	})
+}
+
+func (s *Server) handleWebOrNotFound(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
+		writeError(w, r, http.StatusNotFound, "not_found", "Not found", false)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", false)
+		return
+	}
+	if s.webFS == nil {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"name":    config.AppName,
+			"version": config.Version,
+		})
+		return
+	}
+
+	cleaned := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	if cleaned != "" && cleaned != "." {
+		if info, err := fs.Stat(s.webFS, cleaned); err == nil && !info.IsDir() {
+			s.serveEmbeddedFile(w, r, cleaned)
+			return
+		}
+	}
+	s.serveEmbeddedFile(w, r, "index.html")
+}
+
+func (s *Server) serveEmbeddedFile(w http.ResponseWriter, r *http.Request, name string) {
+	file, err := s.webFS.Open(name)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "not_found", "Not found", false)
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	stat, err := file.Stat()
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "Failed to inspect asset", true)
+		return
+	}
+	rs, ok := file.(io.ReadSeeker)
+	if !ok {
+		data, readErr := io.ReadAll(file)
+		if readErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "internal_error", "Failed to read asset", true)
+			return
+		}
+		http.ServeContent(w, r, name, stat.ModTime(), strings.NewReader(string(data)))
+		return
+	}
+	// ServeContent avoids http.FileServer's 301 redirect loop when serving index.html for "/".
+	http.ServeContent(w, r, name, stat.ModTime(), rs)
+}
+
+func (s *Server) withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if reqID == "" {
+			reqID = newRequestID()
+		}
+		w.Header().Set("X-Request-ID", reqID)
+		w.Header().Set(ServiceHeaderName, ServiceHeaderValue)
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		ctx := context.WithValue(r.Context(), requestIDKey, reqID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) withAccessGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowed := allowedHosts(s.cfg)
+		if allowed != nil {
+			hostName := extractHostname(r.Host)
+			if _, ok := allowed[hostName]; !ok {
+				writeError(
+					w,
+					r,
+					http.StatusForbidden,
+					"host_not_allowed",
+					"This host name is not allowed. Open the observatory via 127.0.0.1 or localhost, or list the name in AGENT_OBS_ALLOWED_HOSTS.",
+					false,
+				)
+				return
+			}
+		}
+
+		if reason := crossSiteReason(r.Method, r.Host, r.Header); reason != "" {
+			writeError(
+				w,
+				r,
+				http.StatusForbidden,
+				"cross_origin_refused",
+				"State-changing requests must come from the observatory itself.",
+				false,
+			)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func allowedHosts(cfg config.Config) map[string]struct{} {
+	loopback := map[string]struct{}{
+		"127.0.0.1": {},
+		"localhost": {},
+		"::1":       {},
+	}
+	if len(cfg.AllowedHosts) > 0 {
+		out := make(map[string]struct{}, len(loopback)+len(cfg.AllowedHosts))
+		for k := range loopback {
+			out[k] = struct{}{}
+		}
+		for _, item := range cfg.AllowedHosts {
+			normalized := strings.ToLower(strings.TrimSpace(item))
+			if normalized == "*" {
+				return nil
+			}
+			if normalized != "" {
+				out[normalized] = struct{}{}
+			}
+		}
+		return out
+	}
+
+	bindHost := extractHostname(cfg.ListenAddr)
+	if bindHost == "localhost" || bindHost == "::1" || strings.HasPrefix(bindHost, "127.") {
+		return loopback
+	}
+	// Explicit non-loopback bind (e.g. 0.0.0.0) allows network callers.
+	return nil
+}
+
+func extractHostname(hostPort string) string {
+	trimmed := strings.TrimSpace(hostPort)
+	if trimmed == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(trimmed); err == nil {
+		return strings.ToLower(strings.Trim(host, "[]"))
+	}
+	return strings.ToLower(strings.Trim(trimmed, "[]"))
+}
+
+func crossSiteReason(method string, host string, headers http.Header) string {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return ""
+	}
+	if origin := headers.Get("Origin"); origin != "" {
+		if origin == "null" {
+			return "opaque origin"
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host == "" {
+			return "malformed origin"
+		}
+		if !strings.EqualFold(parsed.Host, host) {
+			return "cross-origin request"
+		}
+		return ""
+	}
+	if strings.EqualFold(headers.Get("Sec-Fetch-Site"), "cross-site") {
+		return "cross-site request"
+	}
+	return ""
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string, retryable bool) {
+	reqID, _ := r.Context().Value(requestIDKey).(string)
+	writeJSON(w, status, model.ErrorEnvelope{
+		Error: model.ErrorDetail{
+			Code:      code,
+			Message:   message,
+			RequestID: reqID,
+			Retryable: retryable,
+		},
+	})
+}
+
+func newRequestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "req-fallback"
+	}
+	return hex.EncodeToString(raw[:])
+}
