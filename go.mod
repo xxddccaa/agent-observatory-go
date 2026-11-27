@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.4
+	github.com/klauspost/compress v1.20.5
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.63.0
 )

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -14,6 +15,12 @@ import (
 
 	"github.com/agent-observatory/agent-observatory-go/internal/model"
 	_ "modernc.org/sqlite"
+)
+
+var (
+	ErrNotFound      = errors.New("record not found")
+	ErrInvalidCursor = errors.New("invalid cursor")
+	ErrInvalidFilter = errors.New("invalid filter")
 )
 
 //go:embed migrations/*.sql
@@ -167,6 +174,73 @@ func (s *Store) Reader() *sql.DB {
 
 func (s *Store) Writer() *sql.DB {
 	return s.writer
+}
+
+// WithWriterTx executes fn inside a serialized SQLite writer transaction.
+func (s *Store) WithWriterTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin writer tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit writer tx: %w", err)
+	}
+	return nil
+}
+
+// EscapeLike escapes SQL LIKE wildcards (\, %, _) for ESCAPE '\'.
+func EscapeLike(term string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(term)
+}
+
+func nullStrPtr(v sql.NullString) *string {
+	if !v.Valid {
+		return nil
+	}
+	val := v.String
+	return &val
+}
+
+func nullIntPtr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	val := int(v.Int64)
+	return &val
+}
+
+func nullInt64Ptr(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	val := v.Int64
+	return &val
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func defaultString(val, fallback string) string {
+	if val == "" {
+		return fallback
+	}
+	return val
+}
+
+func defaultJSON(val string) string {
+	if strings.TrimSpace(val) == "" {
+		return "{}"
+	}
+	return val
 }
 
 func (s *Store) Close() error {
