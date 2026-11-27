@@ -32,7 +32,7 @@ func newTestServer(t *testing.T) *Server {
 		ListenAddr:  config.DefaultListenAddr,
 		Environment: "test",
 	}
-	return NewServer(cfg, store, webFS)
+	return NewServer(cfg, store, nil, webFS)
 }
 
 func TestMetaAndHealthEndpoints(t *testing.T) {

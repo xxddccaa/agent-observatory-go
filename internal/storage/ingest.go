@@ -10,12 +10,7 @@ import (
 )
 
 // SessionProjection holds the derived rows rebuilt together for one session.
-type SessionProjection struct {
-	Turns     []model.AgentTurn
-	Messages  []model.Message
-	ToolCalls []model.ToolCall
-	Spans     []model.ActivitySpan
-}
+type SessionProjection = model.SessionProjection
 
 // UpsertWorkspaceTx inserts or updates a workspace keyed by normalized_path.
 func (s *Store) UpsertWorkspaceTx(ctx context.Context, tx *sql.Tx, ws model.Workspace) error {
@@ -224,6 +219,91 @@ func (s *Store) GetCheckpointByIdentity(ctx context.Context, sourceIdentity stri
 	cp.LastAttemptAt = nullStrPtr(lastAttempt)
 	cp.LastSuccessAt = nullStrPtr(lastSuccess)
 	return cp, nil
+}
+
+// GetSessionByIdentity fetches an indexed agent_sessions row by canonical source_identity.
+func (s *Store) GetSessionByIdentity(ctx context.Context, sourceIdentity string) (model.AgentSession, error) {
+	var (
+		sess                                                    model.AgentSession
+		rolloutPath, rolloutReal, sourcePath, rolloutComp, srcComp sql.NullString
+		wsID, cwd, gitBranch, orig, cliVer, modelName           sql.NullString
+		threadName, aiTitle, dispTitle, approval                sql.NullString
+		parentID, histBase, sha256Str, lastErr                  sql.NullString
+		startT, endT, lastAct                                   sql.NullString
+		ongoingInt, archivedInt, subInt                         int
+	)
+	err := s.reader.QueryRowContext(ctx, `
+		SELECT
+			id, agent, source_kind, source_identity,
+			rollout_path, rollout_real_path, source_path,
+			rollout_format, source_format, rollout_compression, source_compression,
+			thread_id, workspace_id, cwd, git_branch, originator, cli_version,
+			model, thread_name, ai_title, display_title, approval_mode,
+			turn_count, total_tokens, input_tokens, cached_input_tokens,
+			cache_creation_input_tokens, output_tokens, reasoning_output_tokens,
+			is_ongoing, is_archived, is_subagent, parent_session_id, history_base_thread_id,
+			parser_version, file_size, file_mtime_ns, file_sha256,
+			last_indexed_offset, last_indexed_line, projected_event_index,
+			index_status, last_error, start_time, end_time, last_activity_at,
+			created_at, updated_at
+		FROM agent_sessions
+		WHERE source_identity = ?
+	`, sourceIdentity).Scan(
+		&sess.ID, &sess.Agent, &sess.SourceKind, &sess.SourceIdentity,
+		&rolloutPath, &rolloutReal, &sourcePath,
+		&sess.RolloutFormat, &sess.SourceFormat, &rolloutComp, &srcComp,
+		&sess.ThreadID, &wsID, &cwd, &gitBranch, &orig, &cliVer,
+		&modelName, &threadName, &aiTitle, &dispTitle, &approval,
+		&sess.TurnCount, &sess.TotalTokens, &sess.InputTokens, &sess.CachedInputTokens,
+		&sess.CacheCreationInputTokens, &sess.OutputTokens, &sess.ReasoningOutputTokens,
+		&ongoingInt, &archivedInt, &subInt, &parentID, &histBase,
+		&sess.ParserVersion, &sess.FileSize, &sess.FileMtimeNs, &sha256Str,
+		&sess.LastIndexedOffset, &sess.LastIndexedLine, &sess.ProjectedEventIndex,
+		&sess.IndexStatus, &lastErr, &startT, &endT, &lastAct,
+		&sess.CreatedAt, &sess.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.AgentSession{}, ErrNotFound
+	}
+	if err != nil {
+		return model.AgentSession{}, fmt.Errorf("get session by identity %s: %w", sourceIdentity, err)
+	}
+	sess.RolloutPath = nullStrPtr(rolloutPath)
+	sess.RolloutRealPath = nullStrPtr(rolloutReal)
+	sess.SourcePath = nullStrPtr(sourcePath)
+	sess.RolloutCompression = nullStrPtr(rolloutComp)
+	sess.SourceCompression = nullStrPtr(srcComp)
+	sess.WorkspaceID = nullStrPtr(wsID)
+	sess.CWD = nullStrPtr(cwd)
+	sess.GitBranch = nullStrPtr(gitBranch)
+	sess.Originator = nullStrPtr(orig)
+	sess.CLIVersion = nullStrPtr(cliVer)
+	sess.Model = nullStrPtr(modelName)
+	sess.ThreadName = nullStrPtr(threadName)
+	sess.AITitle = nullStrPtr(aiTitle)
+	sess.DisplayTitle = nullStrPtr(dispTitle)
+	sess.ApprovalMode = nullStrPtr(approval)
+	sess.IsOngoing = ongoingInt != 0
+	sess.IsArchived = archivedInt != 0
+	sess.IsSubagent = subInt != 0
+	sess.ParentSessionID = nullStrPtr(parentID)
+	sess.HistoryBaseThreadID = nullStrPtr(histBase)
+	sess.FileSHA256 = nullStrPtr(sha256Str)
+	sess.LastError = nullStrPtr(lastErr)
+	sess.StartTime = nullStrPtr(startT)
+	sess.EndTime = nullStrPtr(endT)
+	sess.LastActivityAt = nullStrPtr(lastAct)
+	return sess, nil
+}
+
+// MarkCheckpointErrorTx records a failed indexing attempt without dropping prior offset state.
+func (s *Store) MarkCheckpointErrorTx(ctx context.Context, tx *sql.Tx, sourceIdentity, errKind, errMsg, attemptAt string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE index_checkpoints
+		SET status = 'failed', last_error_kind = ?, last_error = ?, last_attempt_at = ?, updated_at = ?
+		WHERE source_identity = ?
+	`, errKind, errMsg, attemptAt, attemptAt, sourceIdentity)
+	return err
 }
 
 // DeleteSessionEventsTx deletes all stored raw events for a session prior to a rebuild.

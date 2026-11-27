@@ -79,6 +79,7 @@ func TestForegroundSubprocessServesHealthAndShutsDown(t *testing.T) {
 	binPath := buildTestBinary(t)
 	dataDir := filepath.Join(t.TempDir(), "data")
 	cmd := exec.Command(binPath, "--foreground", "--listen", "127.0.0.1:0", "--data-dir", dataDir)
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("StdoutPipe: %v", err)
@@ -144,7 +145,9 @@ func TestDaemonLifecycleReleaseParentStatusReuseAndStop(t *testing.T) {
 	listenAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 
 	// First invocation spawns detached child, waits for readiness, and returns quickly.
+	isolatedHome := t.TempDir()
 	startCmd := exec.Command(binPath, "--data-dir", dataDir, "--listen", listenAddr, "--no-open")
+	startCmd.Env = append(os.Environ(), "HOME="+isolatedHome)
 	startOut, err := startCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("daemon start failed: %v\n%s", err, startOut)
@@ -232,7 +235,9 @@ func TestDaemonPortFallbackAndSameAppReuseSubprocess(t *testing.T) {
 	}()
 
 	dataDir1 := filepath.Join(t.TempDir(), "fallback")
-	out1, err := exec.Command(binPath, "--data-dir", dataDir1, "--listen", thirdPartyLn.Addr().String(), "--no-open").CombinedOutput()
+	cmd1 := exec.Command(binPath, "--data-dir", dataDir1, "--listen", thirdPartyLn.Addr().String(), "--no-open")
+	cmd1.Env = append(os.Environ(), "HOME="+t.TempDir())
+	out1, err := cmd1.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fallback daemon launch failed: %v\n%s", err, out1)
 	}
@@ -281,5 +286,31 @@ func TestDaemonPortFallbackAndSameAppReuseSubprocess(t *testing.T) {
 	}
 	if err := exec.Command(binPath, "status", "--data-dir", dataDir2).Run(); err == nil {
 		t.Fatal("expected second data-dir not to spawn a duplicate daemon")
+	}
+}
+
+func TestIndexOnceSubcommandWithExtraRoot(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	extraRoot := filepath.Join(t.TempDir(), "extra-custom")
+	if err := os.MkdirAll(extraRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extraRoot, "session.jsonl"), []byte(`{"timestamp":"2026-11-26T12:00:00Z","role":"user","text":"hello index once"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENT_OBS_EXTRA_ROOTS", "custom:"+extraRoot)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"index", "--once", "--json", "--data-dir", dataDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run(index --once) = %d, stderr=%q", code, stderr.String())
+	}
+	var stats model.CycleStats
+	if err := json.Unmarshal(stdout.Bytes(), &stats); err != nil {
+		t.Fatalf("decode index --once json: %v\n%s", err, stdout.String())
+	}
+	if !stats.Finished || stats.Indexed < 1 {
+		t.Fatalf("expected >= 1 indexed session from extra root, got %+v", stats)
 	}
 }

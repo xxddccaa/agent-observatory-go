@@ -40,6 +40,8 @@ func runWithDeps(
 			return runStatus(args[1:], stdout, stderr)
 		case "stop":
 			return runStop(args[1:], stdout, stderr)
+		case "index":
+			return runIndex(args[1:], stdout, stderr)
 		case "up":
 			args = args[1:]
 		}
@@ -209,6 +211,28 @@ func runStop(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runIndex(args []string, stdout, stderr io.Writer) int {
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "config error: %v\n", err)
+		return 1
+	}
+	fs := flag.NewFlagSet(config.AppName+" index", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data-dir", cfg.DataDir, "Private data directory")
+	once := fs.Bool("once", true, "Run a single full indexing cycle and exit")
+	asJSON := fs.Bool("json", false, "Print cycle stats as JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if !*once {
+		_, _ = fmt.Fprintln(stderr, "only --once is supported for the index subcommand; omit index or use --foreground for continuous indexing")
+		return 2
+	}
+	cfg.DataDir = *dataDir
+	return app.RunIndexOnce(context.Background(), cfg, *asJSON, stdout, stderr)
+}
+
 func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, `Usage: %s [command] [flags]
 
@@ -216,6 +240,7 @@ Commands:
   up (default)   Start background daemon if needed and open Web UI
   status         Show running status, PID, listen address, URL, and log path
   stop           Stop background daemon gracefully and wait for exit
+  index --once   Run a single full discovery + indexing cycle and exit
   version        Print version and exit
 
 Flags:

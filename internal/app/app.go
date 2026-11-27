@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/agent-observatory/agent-observatory-go/internal/api"
 	"github.com/agent-observatory/agent-observatory-go/internal/config"
+	"github.com/agent-observatory/agent-observatory-go/internal/indexer"
 	"github.com/agent-observatory/agent-observatory-go/internal/launcher"
 	"github.com/agent-observatory/agent-observatory-go/internal/model"
 	"github.com/agent-observatory/agent-observatory-go/internal/storage"
@@ -143,7 +145,18 @@ func RunServer(ctx context.Context, cfg config.Config, opts RunOptions) int {
 		return fail(fmt.Sprintf("start control channel: %v", err))
 	}
 
-	srv := api.NewServer(cfg, store, webFS)
+	idx := indexer.New(store, indexer.Options{
+		ExtraRoots:   cfg.ExtraRoots,
+		PollInterval: time.Duration(config.DefaultPollMillis) * time.Millisecond,
+	})
+	var idxWg sync.WaitGroup
+	idxWg.Add(1)
+	go func() {
+		defer idxWg.Done()
+		idx.RunLoop(runCtx)
+	}()
+
+	srv := api.NewServer(cfg, store, idx, webFS)
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -172,14 +185,53 @@ func RunServer(ctx context.Context, cfg config.Config, opts RunOptions) int {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
+		idxWg.Wait()
 		return 0
 	case serveErr := <-errCh:
+		cancel()
+		idxWg.Wait()
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			_, _ = fmt.Fprintf(opts.Stderr, "http server error: %v\n", serveErr)
 			return 1
 		}
 		return 0
 	}
+}
+
+// RunIndexOnce executes a single synchronous full indexing scan and writes results to SQLite.
+func RunIndexOnce(ctx context.Context, cfg config.Config, asJSON bool, stdout, stderr io.Writer) int {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	if err := config.EnsureDirs(cfg.DataDir); err != nil {
+		_, _ = fmt.Fprintf(stderr, "init data dir: %v\n", err)
+		return 1
+	}
+	store, err := storage.Open(ctx, cfg.DataDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "open sqlite: %v\n", err)
+		return 1
+	}
+	defer func() { _ = store.Close() }()
+
+	idx := indexer.New(store, indexer.Options{
+		ExtraRoots: cfg.ExtraRoots,
+	})
+	stats, err := idx.RunOnce(ctx, true)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "index failed: %v\n", err)
+		return 1
+	}
+	if asJSON {
+		_ = json.NewEncoder(stdout).Encode(stats)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "discovered=%d indexed=%d unchanged=%d failures=%d cycle_ms=%.1f\n",
+			stats.Discovered, stats.Indexed, stats.Unchanged, stats.Failures, stats.CycleMS)
+	}
+	return 0
 }
 
 func waitForRunningStatus(ctx context.Context, dataDir string, timeout time.Duration) (launcher.StatusInfo, bool) {

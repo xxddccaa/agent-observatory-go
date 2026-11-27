@@ -626,3 +626,46 @@ type InsightEvidenceSummary struct {
 type InsightEvidenceList struct {
 	Items []InsightEvidenceSummary `json:"items"`
 }
+
+// SessionProjection groups the derived rows rebuilt atomically for one session.
+type SessionProjection struct {
+	Turns     []AgentTurn
+	Messages  []Message
+	ToolCalls []ToolCall
+	Spans     []ActivitySpan
+}
+
+// AgyConversationMeta stores metadata read from agy's conversation_summaries.db.
+type AgyConversationMeta struct {
+	Title     string
+	Workspace string
+	ParentID  string
+}
+
+// CycleStats records counts and durations for a single indexer scan cycle.
+type CycleStats struct {
+	Discovered int     `json:"discovered"`
+	Unchanged  int     `json:"unchanged"`
+	Changed    int     `json:"changed"`
+	Indexed    int     `json:"indexed"`
+	Duplicates int     `json:"duplicates_skipped"`
+	Failures   int     `json:"failures"`
+	Finished   bool    `json:"finished"`
+	DiscoverMS float64 `json:"discover_ms"`
+	PlanMS     float64 `json:"plan_ms"`
+	IngestMS   float64 `json:"ingest_ms"`
+	CycleMS    float64 `json:"cycle_ms"`
+}
+
+// IndexerStatus summarizes live in-process indexer state for health/system endpoints.
+type IndexerStatus struct {
+	Status         string     `json:"status"`
+	Running        bool       `json:"running"`
+	StartedAt      string     `json:"started_at"`
+	LastSeenAt     string     `json:"last_seen_at,omitempty"`
+	LastSuccessAt  string     `json:"last_success_at,omitempty"`
+	LastError      string     `json:"last_error,omitempty"`
+	ActiveSessions int        `json:"active_sessions"`
+	DetectedAgents []string   `json:"detected_agents"`
+	LastCycle      CycleStats `json:"last_cycle"`
+}

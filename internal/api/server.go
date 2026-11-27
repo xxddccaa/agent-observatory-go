@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agent-observatory/agent-observatory-go/internal/config"
+	"github.com/agent-observatory/agent-observatory-go/internal/indexer"
 	"github.com/agent-observatory/agent-observatory-go/internal/model"
 	"github.com/agent-observatory/agent-observatory-go/internal/storage"
 )
@@ -31,15 +32,17 @@ const requestIDKey ctxKey = "request_id"
 type Server struct {
 	cfg     config.Config
 	store   *storage.Store
+	indexer *indexer.Indexer
 	webFS   fs.FS
 	handler http.Handler
 }
 
-func NewServer(cfg config.Config, store *storage.Store, webFS fs.FS) *Server {
+func NewServer(cfg config.Config, store *storage.Store, idx *indexer.Indexer, webFS fs.FS) *Server {
 	s := &Server{
-		cfg:   cfg,
-		store: store,
-		webFS: webFS,
+		cfg:     cfg,
+		store:   store,
+		indexer: idx,
+		webFS:   webFS,
 	}
 
 	mux := http.NewServeMux()
@@ -93,6 +96,32 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		components["sqlite"] = model.ComponentHealth{
 			Status:  "up",
 			Healthy: true,
+		}
+	}
+
+	if s.indexer != nil {
+		snap := s.indexer.Snapshot()
+		if snap.LastError != "" {
+			status = "degraded"
+			components["indexer"] = model.ComponentHealth{
+				Status:        "degraded",
+				Healthy:       false,
+				Message:       "One or more session sources failed during indexing.",
+				LastSeenAt:    snap.LastSeenAt,
+				LastSuccessAt: snap.LastSuccessAt,
+			}
+			recovery = append(recovery, "Inspect local logs for source parse or permission errors.")
+		} else {
+			compStatus := "up"
+			if !snap.Running && snap.LastSeenAt == "" {
+				compStatus = "starting"
+			}
+			components["indexer"] = model.ComponentHealth{
+				Status:        compStatus,
+				Healthy:       true,
+				LastSeenAt:    snap.LastSeenAt,
+				LastSuccessAt: snap.LastSuccessAt,
+			}
 		}
 	}
 
